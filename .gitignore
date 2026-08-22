@@ -1,0 +1,31 @@
+# 构建产物
+bin/
+obj/
+publish/
+*.pdb
+
+# 音频测试文件(版权素材,不入库)
+*.m4a
+*.mp3
+*.wav
+*.aac
+*.flac
+*.ogg
+*.wma
+*.aiff
+*.m4s
+
+# 本地诊断脚本与日志
+*.ps1
+*.log
+$null
+
+# IDE / 工具
+.vs/
+.vscode/
+.zcode/
+icon_candidates/
+
+# 系统文件
+Thumbs.db
+Desktop.ini

@@ -1,0 +1,335 @@
+<Window x:Class="PitchBall.Views.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:controls="clr-namespace:PitchBall.Controls"
+        Title="音高球" Width="1080" Height="680" MinWidth="880" MinHeight="560"
+        Icon="pack://application:,,,/Assets/PitchBall.ico"
+        WindowStyle="None" AllowsTransparency="True" Background="Transparent"
+        FontFamily="Microsoft YaHei UI, Segoe UI"
+        AllowDrop="True" DragOver="OnDragOver" Drop="OnDrop">
+    <WindowChrome.WindowChrome>
+        <WindowChrome CaptionHeight="0" ResizeBorderThickness="7" CornerRadius="16"
+                      GlassFrameThickness="0"/>
+    </WindowChrome.WindowChrome>
+
+    <Border x:Name="RootBorder" CornerRadius="16" Background="{DynamicResource WindowBgBrush}"
+            BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1">
+        <Grid ClipToBounds="True">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="44"/>
+                <RowDefinition Height="*"/>
+            </Grid.RowDefinitions>
+
+            <!-- 背景图片层(可选,带虚化) -->
+            <Image x:Name="BgImage" Grid.RowSpan="2" Stretch="UniformToFill"
+                   Opacity="1" IsHitTestVisible="False">
+                <Image.Effect>
+                    <BlurEffect x:Name="BgBlur" Radius="0"/>
+                </Image.Effect>
+            </Image>
+            <!-- 背景上的遮罩,保证前景可读 -->
+            <Border x:Name="BgMask" Grid.RowSpan="2" Background="{DynamicResource WindowBgBrush}"
+                    Opacity="0.80" IsHitTestVisible="False"/>
+
+            <!-- ===== 标题栏 ===== -->
+            <Grid Grid.Row="0" Background="Transparent"
+                  MouseLeftButtonDown="OnTitleBarMouseDown">
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="16,0,0,0">
+                    <Ellipse Width="14" Height="14" Fill="{DynamicResource AccentBrush}" Margin="0,0,8,0"/>
+                    <TextBlock Text="音高球" FontSize="13" FontWeight="SemiBold"
+                               Foreground="{DynamicResource TextPrimaryBrush}" VerticalAlignment="Center"/>
+                    <TextBlock Text="PitchBall" FontSize="11" Margin="6,0,0,0"
+                               Foreground="{DynamicResource TextSecondaryBrush}" VerticalAlignment="Center"/>
+                </StackPanel>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,6,10,6">
+                    <Button x:Name="SimpleModeBtn" Style="{StaticResource AccentButton}"
+                            Padding="12,5" Margin="0,0,8,0" Click="OnSimpleModeClick">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="●" FontSize="9" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                            <TextBlock Text="简约模式" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </Button>
+                    <Button x:Name="SettingsBtn" Style="{StaticResource IconButton}" Width="40"
+                            Content="⚙" FontSize="14" Click="OnSettingsClick"/>
+                    <Button Style="{StaticResource IconButton}" Content="─" Click="OnMinimizeClick"/>
+                    <Button Style="{StaticResource IconButton}" Content="□" Click="OnMaximizeClick"/>
+                    <Button Style="{StaticResource CloseButton}" Content="✕" Click="OnCloseClick"/>
+                </StackPanel>
+            </Grid>
+
+            <!-- ===== 主内容 ===== -->
+            <Grid Grid.Row="1">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+
+                <!-- 左侧历史栏(可收起,透明背景) -->
+                <Border x:Name="SidebarPanel" Grid.Column="0" Width="240" Margin="12,0,0,12"
+                        CornerRadius="14">
+                    <Grid Margin="10">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
+                        <Grid>
+                            <TextBlock Text="历史分析" FontSize="14" FontWeight="SemiBold"
+                                       Foreground="{DynamicResource TextPrimaryBrush}"
+                                       VerticalAlignment="Center" Margin="6,0,0,0"/>
+                            <Button Content="清空" HorizontalAlignment="Right" FontSize="11"
+                                    Padding="10,4" Click="OnClearHistoryClick"/>
+                        </Grid>
+                        <Grid Grid.Row="1" Margin="0,8,0,0">
+                            <ListBox x:Name="HistoryList" BorderThickness="0" Background="Transparent"
+                                     SelectionChanged="OnHistorySelectionChanged"/>
+                            <TextBlock x:Name="HistoryEmptyHint" Text="暂无分析记录&#x0a;拖入音频文件即可分析"
+                                       TextAlignment="Center" FontSize="12" VerticalAlignment="Center"
+                                       Foreground="{DynamicResource TextSecondaryBrush}">
+                                <TextBlock.ContextMenu>
+                                    <ContextMenu/>
+                                </TextBlock.ContextMenu>
+                            </TextBlock>
+                        </Grid>
+                    </Grid>
+                </Border>
+
+                <!-- 侧栏展开/收起切换条 -->
+                <Border Grid.Column="1" Width="20" Margin="0,0,0,12" Background="Transparent">
+                    <Button x:Name="SidebarToggleBtn" Style="{StaticResource IconButton}" Width="20" Height="54"
+                            ToolTip="展开/收起历史栏" Click="OnSidebarToggleClick" Content="❮"/>
+                </Border>
+
+                <!-- 右侧主区 -->
+                <Grid Grid.Column="2" Margin="4,0,12,12">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+
+                    <!-- 状态条:当前音高(透明背景,仅描边) -->
+                    <Border CornerRadius="14"
+                            BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1"
+                            Padding="18,12" Margin="0,0,0,10">
+                        <Grid>
+                            <StackPanel Orientation="Horizontal">
+                                <StackPanel VerticalAlignment="Center">
+                                    <TextBlock x:Name="StatusNoteText" Text="—" FontSize="38" FontWeight="Bold"
+                                               Foreground="{DynamicResource TextPrimaryBrush}"/>
+                                    <TextBlock x:Name="StatusDetailText" Text="等待音频…" FontSize="12"
+                                               Foreground="{DynamicResource TextSecondaryBrush}"/>
+                                </StackPanel>
+                            </StackPanel>
+                            <StackPanel HorizontalAlignment="Right" Orientation="Horizontal"
+                                        VerticalAlignment="Center">
+                                <StackPanel VerticalAlignment="Center" Margin="0,0,18,0">
+                                    <TextBlock x:Name="SourceLabel" Text="已停止采集" FontSize="11"
+                                               Foreground="{DynamicResource TextSecondaryBrush}"
+                                               HorizontalAlignment="Right"/>
+                                    <Border Width="150" Height="6" CornerRadius="3" Margin="0,6,0,0"
+                                            Background="{DynamicResource HoverBrush}">
+                                        <Rectangle x:Name="LevelFill" Width="0" RadiusX="3" RadiusY="3"
+                                                   HorizontalAlignment="Left" Fill="{DynamicResource AccentBrush}"/>
+                                    </Border>
+                                </StackPanel>
+                                <Button x:Name="BackToLiveBtn" Style="{StaticResource AccentButton}"
+                                        Content="返回实时" Visibility="Collapsed" Click="OnBackToLiveClick"/>
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+
+                    <!-- 波形图区 -->
+                    <Grid Grid.Row="1">
+                        <controls:WaveformView x:Name="Waveform"/>
+                        <!-- 文件模式提示条 -->
+                        <Border x:Name="FileBanner" CornerRadius="10,10,0,0" Padding="14,6"
+                                Background="{DynamicResource AccentSoftBrush}" Visibility="Collapsed"
+                                HorizontalAlignment="Left" VerticalAlignment="Top">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock x:Name="FileBannerText" FontSize="12"
+                                           Foreground="{DynamicResource AccentBrush}" VerticalAlignment="Center"/>
+                            </StackPanel>
+                        </Border>
+                        <!-- 新手引导演示时的波形区高亮框 -->
+                        <Border x:Name="GuideWaveHighlight" CornerRadius="12" BorderThickness="2"
+                                BorderBrush="{DynamicResource AccentBrush}" IsHitTestVisible="False"
+                                Visibility="Collapsed"/>
+                    </Grid>
+                </Grid>
+
+                <!-- ===== 设置面板(覆盖层) ===== -->
+                <Border x:Name="SettingsPanel" Grid.Column="0" Grid.ColumnSpan="3"
+                        Background="#66000000" Visibility="Collapsed" MouseLeftButtonDown="OnSettingsOverlayClick">                    <Grid>
+                        <Border x:Name="SettingsCard" Width="380" CornerRadius="16" Padding="22,16"
+                                Background="{DynamicResource CardBgBrush}" Margin="0,16,16,16"
+                                HorizontalAlignment="Right" VerticalAlignment="Stretch"
+                                MouseLeftButtonDown="OnSettingsCardClick">
+                            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                                <StackPanel>
+                                    <Grid>
+                                        <TextBlock Text="设置" FontSize="18" FontWeight="SemiBold"
+                                                   Foreground="{DynamicResource TextPrimaryBrush}"/>
+                                        <Button Style="{StaticResource IconButton}" Content="✕"
+                                                HorizontalAlignment="Right" Click="OnSettingsClick"/>
+                                    </Grid>
+
+                                    <!-- 外观 -->
+                                    <TextBlock Text="外观" FontSize="13" FontWeight="SemiBold" Margin="0,16,0,6"
+                                               Foreground="{DynamicResource TextSecondaryBrush}"/>
+                                    <StackPanel Orientation="Horizontal" Margin="4,2">
+                                        <RadioButton x:Name="ThemeLightRadio" Content="浅色" GroupName="Theme"
+                                                     Checked="OnThemeRadioChecked" Margin="0,0,16,0"/>
+                                        <RadioButton x:Name="ThemeDarkRadio" Content="深色" GroupName="Theme"
+                                                     Checked="OnThemeRadioChecked" Margin="0,0,16,0"/>
+                                        <RadioButton x:Name="ThemeSystemRadio" Content="跟随系统" GroupName="Theme"
+                                                     Checked="OnThemeRadioChecked"/>
+                                    </StackPanel>
+
+                                    <TextBlock Text="背景图片" FontSize="12" Margin="4,16,0,4"
+                                               Foreground="{DynamicResource TextSecondaryBrush}"/>
+                                    <TextBlock x:Name="BgPathText" Text="未设置" FontSize="11" Margin="4,0,0,6"
+                                               Foreground="{DynamicResource TextSecondaryBrush}"
+                                               TextTrimming="CharacterEllipsis"/>
+                                    <StackPanel Orientation="Horizontal">
+                                        <Button Content="选择图片…" Padding="12,6" Click="OnPickBackgroundClick"/>
+                                        <Button Content="清除" Padding="12,6" Margin="8,0,0,0"
+                                                Click="OnClearBackgroundClick"/>
+                                    </StackPanel>
+                                    <TextBlock x:Name="BlurValueText" Text="虚化程度:20" FontSize="12" Margin="4,14,0,2"
+                                               Foreground="{DynamicResource TextSecondaryBrush}"/>
+                                    <Slider x:Name="BlurSlider" Minimum="0" Maximum="60" TickFrequency="1"
+                                            IsSnapToTickEnabled="True" ValueChanged="OnBlurChanged"/>
+                                    <TextBlock Text="强调色(点击色块修改)" FontSize="12" Margin="4,14,0,4"
+                                               Foreground="{DynamicResource TextSecondaryBrush}"/>
+                                    <StackPanel Orientation="Horizontal">
+                                        <Border x:Name="AccentSwatch" Width="44" Height="26" CornerRadius="7"
+                                                BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1"
+                                                Cursor="Hand" ToolTip="点击修改强调色"
+                                                MouseLeftButtonDown="OnAccentSwatchClick"/>
+                                        <Button Content="重置" FontSize="11" Padding="10,4" Margin="8,0,0,0"
+                                                Click="OnResetAccentClick"/>
+                                    </StackPanel>
+                                    <CheckBox x:Name="AutoAccentCheck" Content="强调色跟随背景图自动变化"
+                                              FontSize="12" Margin="0,8,0,0"
+                                              Checked="OnAutoAccentChanged" Unchecked="OnAutoAccentChanged"/>
+
+                                    <!-- 小球 -->
+                                    <TextBlock Text="简约模式小球" FontSize="13" FontWeight="SemiBold" Margin="0,18,0,6"
+                                               Foreground="{DynamicResource TextSecondaryBrush}"/>
+                                    <TextBlock Text="显示内容" FontSize="12" Margin="4,0,0,4"
+                                               Foreground="{DynamicResource TextSecondaryBrush}"/>
+                                    <StackPanel Margin="4,2">
+                                        <RadioButton x:Name="BallModeNote" Content="仅音名 (A4)" GroupName="BallMode"
+                                                     Checked="OnBallModeChecked" Margin="0,2"/>
+                                        <RadioButton x:Name="BallModeFreq" Content="音名 + 频率 (A4 440Hz)"
+                                                     GroupName="BallMode" Checked="OnBallModeChecked" Margin="0,2"/>
+                                        <RadioButton x:Name="BallModeCents" Content="音名 + 频率 + 音分 (A4 440Hz +2¢)"
+                                                     GroupName="BallMode" Checked="OnBallModeChecked" Margin="0,2"/>
+                                    </StackPanel>
+                                    <TextBlock x:Name="BallSizeText" Text="小球大小:130" FontSize="12" Margin="4,12,0,2"
+                                               Foreground="{DynamicResource TextSecondaryBrush}"/>
+                                    <Slider x:Name="BallSizeSlider" Minimum="88" Maximum="420" TickFrequency="2"
+                                            ValueChanged="OnBallSizeChanged"/>
+                                    <CheckBox x:Name="BallTopmostCheck" Content="小球窗口置顶" Margin="4,8,0,0"
+                                              Checked="OnBallTopmostChanged" Unchecked="OnBallTopmostChanged"/>
+
+                                    <TextBlock Text="小球颜色模式" FontSize="12" Margin="4,12,0,2"
+                                               Foreground="{DynamicResource TextSecondaryBrush}"/>
+                                    <ComboBox x:Name="BallColorModeCombo" Margin="4,2" HorizontalAlignment="Stretch"
+                                              SelectionChanged="OnBallColorModeChanged">
+                                        <ComboBoxItem Content="按音级(12 色)"/>
+                                        <ComboBoxItem Content="按声区(真声/混声/假声)"/>
+                                        <ComboBoxItem Content="按音高分组(3 组)"/>
+                                        <ComboBoxItem Content="按音高分组(4 组)"/>
+                                        <ComboBoxItem Content="按音高分组(5 组)"/>
+                                    </ComboBox>
+                                    <TextBlock x:Name="BallColorHint" Text="点击色块修改颜色" FontSize="11" Margin="4,8,0,4"
+                                               Foreground="{DynamicResource TextSecondaryBrush}"/>
+                                    <UniformGrid x:Name="PitchColorGrid" Columns="6" Margin="0,2,0,0"/>
+                                    <Button Content="重置当前模式颜色" FontSize="11" Padding="10,4" Margin="0,8,0,0"
+                                            HorizontalAlignment="Left" Click="OnResetPitchColorsClick"/>
+
+                                    <!-- 音频 -->
+                                    <TextBlock Text="音频" FontSize="13" FontWeight="SemiBold" Margin="0,18,0,6"
+                                               Foreground="{DynamicResource TextSecondaryBrush}"/>
+                                    <TextBlock x:Name="A4ValueText" Text="A4 基准频率:440 Hz" FontSize="12" Margin="4,0,0,2"
+                                               Foreground="{DynamicResource TextSecondaryBrush}"/>
+                                    <Slider x:Name="A4Slider" Minimum="400" Maximum="480" TickFrequency="1"
+                                            IsSnapToTickEnabled="True" ValueChanged="OnA4Changed"/>
+                                    <TextBlock x:Name="SmoothValueText" Text="音高平滑度:3" FontSize="12" Margin="4,12,0,2"
+                                               Foreground="{DynamicResource TextSecondaryBrush}"/>
+                                    <Slider x:Name="SmoothSlider" Minimum="0" Maximum="7" TickFrequency="1"
+                                            IsSnapToTickEnabled="True" ValueChanged="OnSmoothChanged"/>
+                                    <TextBlock Text="音高检测算法" FontSize="12" Margin="4,12,0,2"
+                                               Foreground="{DynamicResource TextSecondaryBrush}"/>
+                                    <ComboBox x:Name="PitchAlgoCombo" Margin="4,2" HorizontalAlignment="Stretch"
+                                              SelectionChanged="OnPitchAlgoChanged">
+                                        <ComboBoxItem Content="pYIN(HMM 平滑,推荐)"/>
+                                        <ComboBoxItem Content="原 YIN(逐帧检测)"/>
+                                    </ComboBox>
+                                    <TextBlock Text="人声场景(低音抑制策略)" FontSize="12" Margin="4,12,0,2"
+                                               Foreground="{DynamicResource TextSecondaryBrush}"/>
+                                    <ComboBox x:Name="VocalProfileCombo" Margin="4,2" HorizontalAlignment="Stretch"
+                                              SelectionChanged="OnVocalProfileChanged">
+                                        <ComboBoxItem Content="通用(推荐):仅抑制伴奏贝斯区"/>
+                                        <ComboBoxItem Content="纯净CD版:不抑制,保留完整人声音域"/>
+                                        <ComboBoxItem Content="演唱会版:强抑制,防止贝斯抢占"/>
+                                    </ComboBox>
+                                    <CheckBox x:Name="AskOnAnalyzeCheck" Content="拖入音频文件时询问算法与场景" FontSize="12"
+                                              Margin="4,10,0,0" Checked="OnAskOnAnalyzeChanged"
+                                              Unchecked="OnAskOnAnalyzeChanged"/>
+
+                                    <!-- 关于 -->
+                                    <TextBlock Text="关于" FontSize="13" FontWeight="SemiBold" Margin="0,18,0,6"
+                                               Foreground="{DynamicResource TextSecondaryBrush}"/>
+                                    <Button Content="查看新手引导" FontSize="12" Padding="12,6" Margin="0,0,0,10"
+                                            HorizontalAlignment="Left" Click="OnShowOnboardingClick"/>
+                                    <TextBlock Text="音高球 PitchBall v1.0.0&#x0a;实时人声音高测量工具&#x0a;右键小球切换音源,拖入音频文件离线分析"
+                                               FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}"
+                                               LineHeight="18"/>
+                                </StackPanel>
+                            </ScrollViewer>
+                        </Border>
+                    </Grid>
+                </Border>
+            </Grid>
+
+            <!-- ===== 新手引导(首次启动弹出) ===== -->
+            <Border x:Name="OnboardingPanel" Grid.Row="0" Grid.RowSpan="2" Panel.ZIndex="100"
+                    Background="#88000000" Visibility="Collapsed" MouseLeftButtonDown="OnOnboardingMaskClick">
+                <Border x:Name="OnboardingCard" Width="500" MaxHeight="580" CornerRadius="18"
+                        Padding="30,26" Margin="20"
+                        Background="{DynamicResource CardBgBrush}"
+                        VerticalAlignment="Center" HorizontalAlignment="Center"
+                        MouseLeftButtonDown="OnOnboardingCardClick">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+                        <TextBlock x:Name="OnboardingTitle" FontSize="20" FontWeight="Bold"
+                                   Foreground="{DynamicResource TextPrimaryBrush}" TextWrapping="Wrap"/>
+                        <StackPanel x:Name="OnboardingBody" Grid.Row="1" Margin="0,14,0,0"/>
+                        <StackPanel x:Name="OnboardingDots" Grid.Row="2" Orientation="Horizontal"
+                                    HorizontalAlignment="Center" Margin="0,16,0,0"/>
+                        <Grid Grid.Row="3" Margin="0,18,0,0">
+                            <Button Content="跳过引导" FontSize="12" Padding="10,6"
+                                    HorizontalAlignment="Left" VerticalAlignment="Center"
+                                    Click="OnOnboardingSkipClick"/>
+                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                                <Button x:Name="OnboardingPrevBtn" Content="上一步" FontSize="13"
+                                        Padding="16,7" Margin="0,0,10,0" Visibility="Collapsed"
+                                        Click="OnOnboardingPrevClick"/>
+                                <Button x:Name="OnboardingNextBtn" Style="{StaticResource AccentButton}"
+                                        Content="下一步" FontSize="13" Padding="22,7"
+                                        Click="OnOnboardingNextClick"/>
+                            </StackPanel>
+                        </Grid>
+                    </Grid>
+                </Border>
+            </Border>
+        </Grid>
+    </Border>
+</Window>

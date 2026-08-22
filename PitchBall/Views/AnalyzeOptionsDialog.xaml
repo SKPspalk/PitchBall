@@ -1,0 +1,42 @@
+<Window x:Class="PitchBall.Views.AnalyzeOptionsDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="分析设置" Width="400" SizeToContent="Height"
+        WindowStyle="None" AllowsTransparency="True" Background="Transparent"
+        ResizeMode="NoResize" ShowInTaskbar="False"
+        WindowStartupLocation="CenterOwner"
+        FontFamily="Microsoft YaHei UI, Segoe UI"
+        MouseLeftButtonDown="OnTitleMouseDown">
+    <Border CornerRadius="14" Background="{DynamicResource CardBgBrush}"
+            BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1"
+            Padding="24,18">
+        <StackPanel>
+            <TextBlock Text="分析设置" FontSize="17" FontWeight="SemiBold"
+                       Foreground="{DynamicResource TextPrimaryBrush}"/>
+            <TextBlock Text="检测算法" FontSize="12" Margin="0,16,0,4"
+                       Foreground="{DynamicResource TextSecondaryBrush}"/>
+            <RadioButton x:Name="AlgoPyinRadio" Content="pYIN(HMM 平滑,推荐)" GroupName="Algo"
+                         Foreground="{DynamicResource TextPrimaryBrush}" Margin="2,2"/>
+            <RadioButton x:Name="AlgoYinRadio" Content="原 YIN(逐帧检测)" GroupName="Algo"
+                         Foreground="{DynamicResource TextPrimaryBrush}" Margin="2,2"/>
+
+            <TextBlock Text="人声场景" FontSize="12" Margin="0,14,0,4"
+                       Foreground="{DynamicResource TextSecondaryBrush}"/>
+            <RadioButton x:Name="ProfileBalancedRadio" Content="通用(推荐):仅抑制伴奏贝斯区"
+                         GroupName="Profile" Foreground="{DynamicResource TextPrimaryBrush}" Margin="2,2"/>
+            <RadioButton x:Name="ProfileCleanRadio" Content="纯净CD版:不抑制,保留完整人声音域"
+                         GroupName="Profile" Foreground="{DynamicResource TextPrimaryBrush}" Margin="2,2"/>
+            <RadioButton x:Name="ProfileLiveRadio" Content="演唱会版:强抑制,防止贝斯抢占"
+                         GroupName="Profile" Foreground="{DynamicResource TextPrimaryBrush}" Margin="2,2"/>
+
+            <CheckBox x:Name="RememberCheck" Content="记住选择,以后不再询问" FontSize="12"
+                      Margin="0,14,0,0" Foreground="{DynamicResource TextSecondaryBrush}"/>
+
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,18,0,0">
+                <Button Content="取消" Padding="16,7" Margin="0,0,10,0" Click="OnCancelClick"/>
+                <Button Style="{StaticResource AccentButton}" Content="开始分析" Padding="20,7"
+                        Click="OnConfirmClick"/>
+            </StackPanel>
+        </StackPanel>
+    </Border>
+</Window>

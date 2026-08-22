@@ -1,0 +1,35 @@
+<Window x:Class="PitchBall.Views.PitchBallWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="音高球" WindowStyle="None" AllowsTransparency="True" Background="Transparent"
+        Icon="pack://application:,,,/Assets/PitchBall.ico"
+        Topmost="True" ShowActivated="False"
+        MinWidth="88" MinHeight="88" MaxWidth="420" MaxHeight="420"
+        AllowDrop="True" DragOver="OnDragOver" Drop="OnDrop"
+        MouseLeftButtonDown="OnMouseLeftDown" MouseMove="OnMouseMove"
+        MouseLeftButtonUp="OnMouseLeftUp" ContextMenuOpening="OnContextMenuOpening">
+    <Grid>
+        <Ellipse x:Name="Glow" Margin="0" Fill="{DynamicResource BallGlowBrush}" Opacity="0.35"
+                 IsHitTestVisible="False"/>
+        <Ellipse x:Name="Ring" Margin="5" StrokeThickness="3" Stroke="{DynamicResource IdleRingBrush}"/>
+        <!-- 新手引导演示时的高亮圈 -->
+        <Ellipse x:Name="GuideRing" Margin="1" StrokeThickness="5" Stroke="{DynamicResource AccentBrush}"
+                 StrokeDashArray="4,3" Visibility="Collapsed" IsHitTestVisible="False"/>
+        <Ellipse x:Name="BallFace" Margin="9" Fill="{DynamicResource CardBgBrush}">
+            <Ellipse.Effect>
+                <DropShadowEffect BlurRadius="16" ShadowDepth="3" Opacity="0.3"/>
+            </Ellipse.Effect>
+        </Ellipse>
+        <StackPanel Margin="12" VerticalAlignment="Center" HorizontalAlignment="Center">
+            <TextBlock x:Name="NoteText" Text="—" FontWeight="Bold" FontSize="30"
+                       Foreground="{DynamicResource TextPrimaryBrush}"
+                       HorizontalAlignment="Center" TextAlignment="Center"/>
+            <TextBlock x:Name="FreqText" Text="" FontSize="13"
+                       Foreground="{DynamicResource TextSecondaryBrush}"
+                       HorizontalAlignment="Center" TextAlignment="Center"/>
+            <TextBlock x:Name="CentsText" Text="" FontSize="12"
+                       Foreground="{DynamicResource TextSecondaryBrush}"
+                       HorizontalAlignment="Center" TextAlignment="Center"/>
+        </StackPanel>
+    </Grid>
+</Window>
