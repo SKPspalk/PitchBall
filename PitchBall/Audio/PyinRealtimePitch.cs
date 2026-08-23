@@ -19,9 +19,12 @@ public sealed class PyinRealtimePitch
 
     private const int LagFrames = 96;  // 输出滞后(子帧数,@172fps ≈ 0.56s)
     private const int PsiRingFrames = 160; // psi 环容量(≥ 滞后 + 余量)
+    private const double ObsAlpha = 0.4;   // 观测时间平滑系数
 
     private readonly PyinPitchDetector _yin = new();
     private readonly List<PyinCandidate[]> _candRing = new(PsiRingFrames);
+    private readonly double[] _obsSmooth = new double[PyinMonoPitch.StateCount];
+    private bool _obsFirst = true;
     private PyinMonoPitch _hmm = new(PyinMonoPitch.RefHopSeconds);
     private double _hmmRate = 44100;
     private long _frameCount;   // 已前向的观测帧数
@@ -49,12 +52,28 @@ public sealed class PyinRealtimePitch
         var cands = _yin.Process(_block, sampleRate);
         var obs = _hmm.CalculateObsProb(cands);
 
+        // 观测时间平滑(IIR):和声/鼓点丰富的段落,单帧候选被打散且逐帧跳变,
+        // 平滑后同一音高反复出现的峰值在箱上累积,路径不易断
+        if (_obsFirst)
+        {
+            Array.Copy(obs, _obsSmooth, PyinMonoPitch.StateCount);
+            _obsFirst = false;
+        }
+        else
+        {
+            for (int s = 0; s < PyinMonoPitch.StateCount; s++)
+            {
+                _obsSmooth[s] = ObsAlpha * obs[s] + (1 - ObsAlpha) * _obsSmooth[s];
+            }
+        }
+        obs = _obsSmooth;
+
         // 人声帧间候选抖动时,给有声箱加微量地板概率,让路径可以滑过 1-3 个
-        // 无支持帧,避免频繁退出/进入导致显示断断续续。
-        // 地板 ≈ 无声箱观测的 5%,远低于无声箱,不会引入虚假音高。
+        // 无支持帧,避免频繁退出/进入导致显示断断续续(强贝斯/鼓点瞬态同样受益)。
+        // 地板 ≈ 无声箱观测的 8%,远低于无声箱,不会引入虚假音高。
         for (int p = 0; p < PyinMonoPitch.NPitch; p++)
         {
-            if (obs[p] < 1e-4) obs[p] = 1e-4;
+            if (obs[p] < 2.5e-4) obs[p] = 2.5e-4;
         }
 
         _candRing.Add(cands);
@@ -91,5 +110,6 @@ public sealed class PyinRealtimePitch
         _candRing.Clear();
         _frameCount = 0;
         _candBase = 0;
+        _obsFirst = true;
     }
 }

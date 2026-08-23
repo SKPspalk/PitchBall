@@ -351,7 +351,7 @@ public partial class PitchBallWindow : Window
         Glow.Opacity = 0.35 + level * 0.5;
     }
 
-    /// <summary>按颜色模式取小球外圈颜色:音级 / 声区 / 音高分组(3/4/5 组)。</summary>
+    /// <summary>按颜色模式取小球外圈颜色:音级 / 声区 / 声部(男/女低中高)。</summary>
     private static Brush GetBallBrush(int midi, VocalRegister register)
     {
         string mode = App.Instance.Settings.Current.BallColorMode;
@@ -359,12 +359,20 @@ public partial class PitchBallWindow : Window
         {
             return GetRegisterBrush(register);
         }
-        if (mode.StartsWith("Groups") && int.TryParse(mode.AsSpan(6), out int n) && n >= 3 && n <= 5)
+        if (mode == "VoiceRange" || mode.StartsWith("Groups"))
         {
-            // 分组区间:C2(36)~C7(96),低→高均分 N 组
-            double band = (midi - 36) / 60.0 * n;
-            int idx = Math.Clamp((int)band, 0, n - 1);
-            return GetGroupBrush(idx, n);
+            // 声部划分(男低→女高):<C3 / C3-C4 / C4-C5 / C5-F5 / F5-A5 / >A5
+            double f = NoteNames.MidiToFrequency(midi, 440);
+            int idx = f switch
+            {
+                < 130.81 => 0,                        // 男低音 <C3
+                < 261.63 => 1,                        // 男中音 C3-C4
+                < 523.25 => 2,                        // 男高音 C4-C5
+                < 698.46 => 3,                        // 女低音 C5-F5
+                < 880.00 => 4,                        // 女中音 F5-A5
+                _ => 5,                               // 女高音 >A5
+            };
+            return GetGroupBrush(idx, 6);
         }
         return GetPitchClassBrush(midi);
     }

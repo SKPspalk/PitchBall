@@ -335,10 +335,7 @@ public partial class MainWindow : Window
             BlurSlider.Value = s.BackgroundBlur;
             BlurValueText.Text = $"虚化程度:{s.BackgroundBlur:F0}";
             AutoAccentCheck.IsChecked = s.AutoAccent;
-            string effAccent = s.AutoAccent && !string.IsNullOrEmpty(s.AccentColorAuto)
-                ? s.AccentColorAuto : s.AccentColor;
-            AccentSwatch.Background = new SolidColorBrush(
-                PitchColors.FromHex(effAccent, System.Windows.Media.Color.FromRgb(0x6C, 0x93, 0xFF)));
+            RefreshAccentSwatch();
 
             BallModeNote.IsChecked = s.BallDisplayMode == "NoteOnly";
             BallModeFreq.IsChecked = s.BallDisplayMode == "NoteFreq";
@@ -363,9 +360,7 @@ public partial class MainWindow : Window
             BallColorModeCombo.SelectedIndex = s.BallColorMode switch
             {
                 "Register" => 1,
-                "Groups3" => 2,
-                "Groups4" => 3,
-                "Groups5" => 4,
+                "VoiceRange" or "Groups3" or "Groups4" or "Groups5" => 2,
                 _ => 0,
             };
             AskOnAnalyzeCheck.IsChecked = s.AskOnAnalyze;
@@ -548,7 +543,10 @@ public partial class MainWindow : Window
     // ---------------- 小球颜色编辑(音级 / 声区 / 分组) ----------------
 
     private static readonly string[] DefaultRegisterColors = ["#FF8C42", "#34C77B", "#B44CFF"];
-    private static readonly string[] DefaultGroupColors = ["#4F9DF3", "#2EC4B6", "#8BD450", "#FFC53D", "#F2555A"];
+    private static readonly string[] DefaultGroupColors = ["#4F9DF3", "#2EC4B6", "#8BD450", "#FFC53D", "#FF8C42", "#F2555A"];
+    // 声部划分(男/女低中高)及标注音域
+    private static readonly string[] VoicePartLabels = ["男低音", "男中音", "男高音", "女低音", "女中音", "女高音"];
+    private static readonly string[] VoicePartRanges = ["<C3", "C3–C4", "C4–C5", "C5–F5", "F5–A5", ">A5"];
 
     private void OnBallColorModeChanged(object sender, SelectionChangedEventArgs e)
     {
@@ -558,9 +556,7 @@ public partial class MainWindow : Window
         s.BallColorMode = BallColorModeCombo.SelectedIndex switch
         {
             1 => "Register",
-            2 => "Groups3",
-            3 => "Groups4",
-            4 => "Groups5",
+            2 => "VoiceRange",
             _ => "PitchClass",
         };
         App.Instance.Settings.Save();
@@ -573,34 +569,33 @@ public partial class MainWindow : Window
         var s = App.Instance.Settings.Current;
         // 防御:旧设置文件可能缺项,先补齐各数组长度
         if (s.RegisterColors.Length < 3) s.RegisterColors = [.. DefaultRegisterColors];
-        if (s.GroupColors.Length < 5) s.GroupColors = [.. DefaultGroupColors];
+        if (s.GroupColors.Length < 6) s.GroupColors = [.. DefaultGroupColors];
         if (s.PitchClassColors.Length < 12) s.PitchClassColors = PitchColors.CreateDefaults();
 
         PitchColorGrid.Children.Clear();
         string mode = s.BallColorMode;
         if (mode == "Register")
         {
+            PitchColorGrid.Columns = 6;
             string[] labels = ["真声", "混声", "假声"];
             for (int i = 0; i < 3; i++)
             {
                 AddSwatch(s.RegisterColors, i, labels[i], DefaultRegisterColors[i]);
             }
         }
-        else if (mode.StartsWith("Groups") && int.TryParse(mode.AsSpan(6), out int n))
+        else if (mode == "VoiceRange" || mode.StartsWith("Groups"))
         {
-            string[] labels = n switch
+            // 按声部:男低/男中/男高 + 女低/女中/女高,色块下方标注划分音高
+            PitchColorGrid.Columns = 3;
+            for (int i = 0; i < 6; i++)
             {
-                3 => ["低", "中", "高"],
-                4 => ["低", "中低", "中高", "高"],
-                _ => ["低", "中低", "中", "中高", "高"],
-            };
-            for (int i = 0; i < n; i++)
-            {
-                AddSwatch(s.GroupColors, i, labels[i], DefaultGroupColors[i]);
+                AddSwatch(s.GroupColors, i, $"{VoicePartLabels[i]} {VoicePartRanges[i]}",
+                    DefaultGroupColors[i]);
             }
         }
         else
         {
+            PitchColorGrid.Columns = 6;
             var defaults = PitchColors.CreateDefaults();
             for (int pc = 0; pc < 12; pc++)
             {
@@ -664,7 +659,7 @@ public partial class MainWindow : Window
         {
             s.RegisterColors = [.. DefaultRegisterColors];
         }
-        else if (s.BallColorMode.StartsWith("Groups"))
+        else if (s.BallColorMode == "VoiceRange" || s.BallColorMode.StartsWith("Groups"))
         {
             s.GroupColors = [.. DefaultGroupColors];
         }
@@ -731,6 +726,7 @@ public partial class MainWindow : Window
                 BgPathText.Text = "未设置";
                 BgMask.Opacity = 0.80;
                 if (s.AutoAccent) App.Instance.ApplyAccent(); // 无背景图时回到手动强调色
+                RefreshAccentSwatch();
                 return;
             }
             var bmp = new BitmapImage();
@@ -746,6 +742,7 @@ public partial class MainWindow : Window
             // 强调色跟随背景:从背景图主色调派生强调色
             if (s.AutoAccent) ApplyAutoAccent(bmp);
             else App.Instance.ApplyAccent();
+            RefreshAccentSwatch();
         }
         catch
         {
@@ -790,8 +787,7 @@ public partial class MainWindow : Window
         var s = App.Instance.Settings.Current;
         s.AccentColor = "#6C93FF";
         App.Instance.Settings.Save();
-        AccentSwatch.Background = new SolidColorBrush(
-            System.Windows.Media.Color.FromRgb(0x6C, 0x93, 0xFF));
+        RefreshAccentSwatch();
         App.Instance.ApplyAccent();
     }
 
@@ -809,9 +805,17 @@ public partial class MainWindow : Window
         {
             App.Instance.ApplyAccent();
         }
+        RefreshAccentSwatch();
+    }
+
+    /// <summary>刷新设置面板的强调色色块:跟随模式下显示自动派生值,否则显示手动颜色。</summary>
+    private void RefreshAccentSwatch()
+    {
+        var s = App.Instance.Settings.Current;
+        string eff = s.AutoAccent && !string.IsNullOrEmpty(s.AccentColorAuto)
+            ? s.AccentColorAuto : s.AccentColor;
         AccentSwatch.Background = new SolidColorBrush(
-            PitchColors.FromHex(s.AutoAccent ? s.AccentColorAuto : s.AccentColor,
-                System.Windows.Media.Color.FromRgb(0x6C, 0x93, 0xFF)));
+            PitchColors.FromHex(eff, System.Windows.Media.Color.FromRgb(0x6C, 0x93, 0xFF)));
     }
 
     /// <summary>从背景图采样主色调,派生明亮鲜明的强调色并应用。</summary>

@@ -58,6 +58,7 @@ public sealed class PyinPitchDetector
 
     /// <summary>最近一帧的声区分类结果(处理完一帧后读取)。</summary>
     public VocalRegister LastRegister { get; private set; } = VocalRegister.Chest;
+    private int _falsettoStreak; // 连续假声帧计数(迟滞用)
 
     /// <summary>处理一帧(2048 样本),返回候选列表(概率已按 pYINmain 低幅规则缩放)。</summary>
     public PyinCandidate[] Process(ReadOnlySpan<float> input, double sampleRate)
@@ -211,9 +212,17 @@ public sealed class PyinPitchDetector
         // 次谐波链 + 最高候选 ≥150Hz = 假声特征(低音也有次谐波链,但那是贝斯而非假声)
         bool falsettoLike = fTop >= 150 && HasNear(fTop / 2) && fTop > FMin * 2;
 
+        // 迟滞:连续 ≥2 帧假声才启用增强,避免鼓点/噪声单帧误触发
+        // 造成谐波链内候选跳变(曲线直升直降)
+        _falsettoStreak = falsettoLike ? _falsettoStreak + 1 : 0;
+        bool applyFalsetto = _falsettoStreak >= 2;
         if (falsettoLike)
         {
             LastRegister = VocalRegister.Falsetto;
+        }
+
+        if (applyFalsetto)
+        {
             // 只处理顶候选自身的谐波链 {f/2, f, 2f, 4f}。
             // 用次谐波求和(SHS,Hermes 1988)为链成员打分:
             // score(m) = Σ 0.84^(n-1)·P(n·m),n=1..5。
@@ -266,7 +275,7 @@ public sealed class PyinPitchDetector
                 }
             }
         }
-        else
+        else if (!falsettoLike)
         {
             // 谐波丰富度:2-8 次谐波能量 / 基频能量,粗略区分真声与混声
             double sFund = SpecAt(fTop);
@@ -319,8 +328,8 @@ public sealed class PyinPitchDetector
     public static double VocalWeight(double freq)
         => VocalProfile switch
         {
-            // 纯净CD版:仅温和抑制 100Hz 以下亚低音(伴奏贝斯),人声 ≥100Hz 不衰减
-            VocalProfileType.Clean => freq >= 100 ? 1.0 : Math.Pow(freq / 100.0, 3),
+            // 纯净CD版:仅抑制 100Hz 以下亚低音(伴奏/低音声部),人声 ≥100Hz 基本不衰减
+            VocalProfileType.Clean => freq >= 100 ? 1.0 : Math.Pow(freq / 100.0, 6),
             VocalProfileType.Live => freq >= 220 ? 1.0 : Math.Pow(freq / 220.0, 4),
             _ => freq >= 130 ? 1.0 : Math.Pow(Math.Max(0, (freq - 55) / 75.0), 4),
         };

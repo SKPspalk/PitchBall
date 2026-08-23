@@ -36,14 +36,14 @@ public class AppSettings
     /// <summary>小球 12 音级颜色("#RRGGBB",下标 = 音级 C=0)。</summary>
     public string[] PitchClassColors { get; set; } = PitchColors.CreateDefaults();
 
-    /// <summary>小球颜色模式:PitchClass(音级)/ Register(声区)/ Groups3 / Groups4 / Groups5。</summary>
+    /// <summary>小球颜色模式:PitchClass(音级)/ Register(声区)/ VoiceRange(声部,男/女低中高)。</summary>
     public string BallColorMode { get; set; } = "PitchClass";
 
     /// <summary>声区颜色:真声 / 混声 / 假声("#RRGGBB")。</summary>
     public string[] RegisterColors { get; set; } = ["#FF8C42", "#34C77B", "#B44CFF"];
 
-    /// <summary>音高分组颜色(低→高 5 色;3/4 组时取前 N 个)。</summary>
-    public string[] GroupColors { get; set; } = ["#4F9DF3", "#2EC4B6", "#8BD450", "#FFC53D", "#F2555A"];
+    /// <summary>声部颜色(男低→男中→男高→女低→女中→女高,6 色,"#RRGGBB")。</summary>
+    public string[] GroupColors { get; set; } = ["#4F9DF3", "#2EC4B6", "#8BD450", "#FFC53D", "#FF8C42", "#F2555A"];
 
     // ---- 音频 ----
     /// <summary>A4 基准频率,默认 440Hz。</summary>

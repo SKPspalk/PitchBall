@@ -271,6 +271,12 @@ public static class FileAnalyzer
         int nFrames = candFrames.Count;
         var statePath = new int[nFrames];
         var obsScratch = new double[PyinMonoPitch.StateCount];
+        // 观测时间平滑(IIR):和声丰富的多声部段落里,单帧候选被打散且逐帧跳变,
+        // 平滑后同一音高反复出现的峰值会在自己的箱上累积出稳定支撑,
+        // HMM 得以锁定主导人声线(文件与实时管线均启用)
+        var obsSmooth = new double[PyinMonoPitch.StateCount];
+        bool firstObs = true;
+        const double obsAlpha = 0.4;
         double fps = AnalysisRate / (double)hop;
         int segFrames = (int)(60 * fps);
         int ctxFrames = (int)(1.0 * fps);
@@ -282,7 +288,19 @@ public static class FileAnalyzer
             var segPath = hmm.DecodeViterbi(to - from, i =>
             {
                 hmm.CalculateObsProbInto(candFrames[from + i], obsScratch);
-                return obsScratch;
+                if (firstObs)
+                {
+                    Array.Copy(obsScratch, obsSmooth, PyinMonoPitch.StateCount);
+                    firstObs = false;
+                }
+                else
+                {
+                    for (int s = 0; s < PyinMonoPitch.StateCount; s++)
+                    {
+                        obsSmooth[s] = obsAlpha * obsScratch[s] + (1 - obsAlpha) * obsSmooth[s];
+                    }
+                }
+                return obsSmooth;
             });
             for (int i = segStart; i < Math.Min(segStart + segFrames, nFrames); i++)
             {
@@ -293,11 +311,67 @@ public static class FileAnalyzer
         progress?.Report(0.97);
 
         var freqs = new double[nFrames];
+        for (int i = 0; i < nFrames; i++)
+        {
+            freqs[i] = hmm.MapStateToFreq(statePath[i], candFrames[i]);
+        }
+
+        // 显示级连续性后处理(与实时引擎一致):
+        // 短丢帧保持上一音高;以慢速锚点判断异常跳变/滑落(超过约 ±7 半音),
+        // 异常时保持锚点(连拒 >1.2s 才接受新音高线),抹平直升直降与"触底"
+        double lastF = 0;
+        double anchorF = 0;
+        int holdLeft = 0;
+        int rejectCount = 0;
+        const int holdFrames = 12;      // ≈0.28s @ 43fps
+        const int maxRejectFrames = 52; // ≈1.2s @ 43fps
+        const double anchorAlpha = 0.2;
+        for (int i = 0; i < nFrames; i++)
+        {
+            double f = freqs[i];
+            if (f > 0)
+            {
+                if (anchorF <= 0) anchorF = f;
+                double ratio = f / anchorF;
+                if (ratio > 1.5 || ratio < 0.667)
+                {
+                    rejectCount++;
+                    if (rejectCount > maxRejectFrames)
+                    {
+                        // 连拒超过时限:接受新音高线
+                        anchorF = f;
+                        rejectCount = 0;
+                    }
+                    else
+                    {
+                        f = anchorF;
+                    }
+                }
+                else
+                {
+                    anchorF += anchorAlpha * (f - anchorF);
+                    rejectCount = 0;
+                }
+                lastF = f;
+                holdLeft = holdFrames;
+                freqs[i] = f;
+            }
+            else if (lastF > 0 && holdLeft > 0)
+            {
+                freqs[i] = lastF;
+                holdLeft--;
+            }
+            else
+            {
+                lastF = 0;
+                holdLeft = 0;
+            }
+        }
+
         var counts = new Dictionary<int, int>();
         for (int i = 0; i < nFrames; i++)
         {
-            double f = hmm.MapStateToFreq(statePath[i], candFrames[i]);
-            freqs[i] = f;
+            double f = freqs[i];
             if (f > 0)
             {
                 int midi = NoteNames.FrequencyToMidiNote(f);

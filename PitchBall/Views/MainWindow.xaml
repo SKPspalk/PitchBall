@@ -239,9 +239,7 @@
                                               SelectionChanged="OnBallColorModeChanged">
                                         <ComboBoxItem Content="按音级(12 色)"/>
                                         <ComboBoxItem Content="按声区(真声/混声/假声)"/>
-                                        <ComboBoxItem Content="按音高分组(3 组)"/>
-                                        <ComboBoxItem Content="按音高分组(4 组)"/>
-                                        <ComboBoxItem Content="按音高分组(5 组)"/>
+                                        <ComboBoxItem Content="按声部(男/女低中高,6 色)"/>
                                     </ComboBox>
                                     <TextBlock x:Name="BallColorHint" Text="点击色块修改颜色" FontSize="11" Margin="4,8,0,4"
                                                Foreground="{DynamicResource TextSecondaryBrush}"/>

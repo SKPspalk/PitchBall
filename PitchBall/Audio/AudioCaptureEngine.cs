@@ -20,6 +20,11 @@ public sealed class AudioCaptureEngine : IDisposable
     private readonly double[] _smoothBuffer = new double[16];
     private readonly double[] _recentScratch = new double[16];
     private int _smoothCount;
+    private static readonly TimeSpan HoldTime = TimeSpan.FromMilliseconds(280); // 短丢帧保持时长
+    private double _lastOutFreq;
+    private DateTime _lastOutAt = DateTime.MinValue;
+    private double _anchorFreq;   // 慢速参考音高(锚点)
+    private int _rejectCount;     // 连续异常帧计数
 
     private IWaveIn? _waveIn;                 // 麦克风 / 整机回环
     private ProcessLoopbackWaveIn? _process;  // 按应用回环
@@ -217,8 +222,46 @@ public sealed class AudioCaptureEngine : IDisposable
         }
         double smoothed = MedianSmooth(_recentScratch, n, highLimit);
 
+        // 连续性增强:①短暂丢帧保持上一音高(避免曲线断断续续);
+        // ②锚点式异常抑制:与慢速参考音高偏差超过约 ±7 半音的跳变/滑落
+        // 视为噪声保持锚点(连拒约 1.2s 才接受新音高线),抹平直升直降与触底
+        var now = DateTime.Now;
+        if (smoothed > 0)
+        {
+            if (_anchorFreq <= 0) _anchorFreq = smoothed;
+            double ratio = smoothed / _anchorFreq;
+            if (ratio > 1.5 || ratio < 0.667)
+            {
+                _rejectCount++;
+                if (_rejectCount > 26) // ≈1.2s @ 21.5fps
+                {
+                    _anchorFreq = smoothed;
+                    _rejectCount = 0;
+                }
+                else
+                {
+                    smoothed = _anchorFreq;
+                }
+            }
+            else
+            {
+                _anchorFreq += 0.2 * (smoothed - _anchorFreq);
+                _rejectCount = 0;
+            }
+            _lastOutFreq = smoothed;
+            _lastOutAt = now;
+        }
+        else if (_lastOutFreq > 0 && (now - _lastOutAt) <= HoldTime)
+        {
+            smoothed = _lastOutFreq;
+        }
+        else
+        {
+            _lastOutFreq = 0;
+        }
+
         double level = Math.Min(1.0, rms * 8.0);
-        var sample = new PitchSample(smoothed, level, DateTime.Now,
+        var sample = new PitchSample(smoothed, level, now,
             Algorithm == "Pyin" ? _pyin.LastRegister : VocalRegister.Chest);
         PostToUi(() => PitchUpdated?.Invoke(sample));
     }
