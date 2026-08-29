@@ -1,5 +1,7 @@
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Text;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Media;
 using NAudio.CoreAudioApi;
@@ -40,6 +42,8 @@ public partial class App : Application
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+
+        RegisterGlobalCrashHandlers();
 
         // 命令行自检模式(不启动界面)
         if (e.Args.Length > 0 && e.Args[0] == "--selftest")
@@ -199,6 +203,21 @@ public partial class App : Application
             _runUiTest = true;
         }
 
+        try
+        {
+            StartGui();
+        }
+        catch (Exception ex)
+        {
+            // 启动期崩溃(双击后"没反应/闪退"的典型原因):记日志并给用户可见提示
+            LogCrash(ex, "启动");
+            ShowCrashMessage("启动", ex);
+            Shutdown();
+        }
+    }
+
+    private void StartGui()
+    {
         // 单实例
         _mutex = new Mutex(true, @"Local\PitchBall_SingleInstance", out bool createdNew);
         if (!createdNew)
@@ -253,6 +272,81 @@ public partial class App : Application
         if (_runUiTest)
         {
             Dispatcher.BeginInvoke(RunUiTests);
+        }
+    }
+
+    // ---------------- 崩溃日志 ----------------
+
+    private static readonly string CrashLogPath = Path.Combine(SettingsService.DataDir, "crash.log");
+    private bool _crashDialogShown;
+
+    private void RegisterGlobalCrashHandlers()
+    {
+        AppDomain.CurrentDomain.UnhandledException += (_, args) =>
+        {
+            var ex = args.ExceptionObject as Exception
+                     ?? new Exception(args.ExceptionObject?.ToString() ?? "未知异常(无异常对象)");
+            LogCrash(ex, "后台线程");
+        };
+        DispatcherUnhandledException += (_, args) =>
+        {
+            LogCrash(args.Exception, "界面线程");
+            if (!_crashDialogShown)
+            {
+                _crashDialogShown = true;
+                ShowCrashMessage("界面线程", args.Exception);
+            }
+            args.Handled = true;
+        };
+        TaskScheduler.UnobservedTaskException += (_, args) =>
+        {
+            LogCrash(args.Exception, "后台任务");
+            args.SetObserved();
+        };
+    }
+
+    /// <summary>把未处理异常写入 %APPDATA%\PitchBall\crash.log,附带版本与系统信息。</summary>
+    private static void LogCrash(Exception? ex, string context)
+    {
+        try
+        {
+            Directory.CreateDirectory(SettingsService.DataDir);
+            var sb = new StringBuilder();
+            sb.AppendLine("========================================");
+            sb.AppendLine($"时间: {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
+            sb.AppendLine($"版本: {typeof(App).Assembly.GetName().Version}");
+            sb.AppendLine($"系统: {Environment.OSVersion.VersionString} ({RuntimeInformation.OSDescription})");
+            sb.AppendLine($"框架: {RuntimeInformation.FrameworkDescription}");
+            sb.AppendLine($"位置: {context}");
+            for (var e = ex; e != null; e = e.InnerException)
+            {
+                sb.AppendLine("----------------------------------------");
+                sb.AppendLine($"异常: {e.GetType().FullName}");
+                sb.AppendLine($"消息: {e.Message}");
+                sb.AppendLine($"堆栈:{Environment.NewLine}{e.StackTrace}");
+            }
+            File.AppendAllText(CrashLogPath, sb.ToString());
+        }
+        catch
+        {
+            // 日志写失败不致命
+        }
+    }
+
+    /// <summary>崩溃时的用户可见提示,指明日志文件位置。</summary>
+    private void ShowCrashMessage(string context, Exception ex)
+    {
+        string text = "程序遇到了一个错误,已把详细信息记录到日志文件:\n" +
+                      CrashLogPath +
+                      $"\n\n错误({context}): {ex.Message}" +
+                      "\n\n请把该日志文件发给开发者,即可快速定位问题。";
+        try
+        {
+            MessageBox.Show(text, "音高球", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+        catch
+        {
+            // 连消息框都弹不出来的极端情况
         }
     }
 
