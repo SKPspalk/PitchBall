@@ -2,8 +2,12 @@ namespace PitchBall.Audio;
 
 using PitchBall.Models;
 
-/// <summary>pYIN 的一帧候选:(音高, 概率),音高以 MIDI 表示(69 = A4)。</summary>
-public readonly record struct PyinCandidate(double Midi, double Prob);
+/// <summary>pYIN 的一帧候选:(音高, 概率, 低阶谐波支持度, 基波支持度),音高以 MIDI 表示(69 = A4)。
+/// Sup = max(谱能量@f, @2f, @3f) / 帧内最强谱峰(0~1):该候选在频谱上是否有真实支撑。
+/// Fnd = 谱能量@f / 帧内最强谱峰:该候选"自身基波"是否真的在谱上——次谐波候选的
+/// Sup 会被真基频虚高(它的 2f 恰是那个强峰),Fnd 才能把它与真基频分开。
+/// 二者供 PyinMonoPitch.MapStateToFreq 判定并纠正"谱上不存在的次谐波幻音"。</summary>
+public readonly record struct PyinCandidate(double Midi, double Prob, double Sup = 1.0, double Fnd = 1.0);
 
 /// <summary>
 /// pYIN(Mauch &amp; Dixon, ICASSP 2014)的 YIN 概率阶段,按官方 C++ 的 Python 移植
@@ -22,7 +26,9 @@ public sealed class PyinPitchDetector
     /// <summary>检测频率下限(Hz),对应 yinProb 的 maxTau0。</summary>
     public double FMin { get; set; } = 40;
 
-    /// <summary>检测频率上限(Hz),对应 yinProb 的 minTau0。</summary>
+    /// <summary>检测频率上限(Hz),对应 yinProb 的 minTau0。
+    /// 注:这是硬上限,提高到 2000 可覆盖哨音区,但实测(142 分钟现场录音)
+    /// 无收益且边际误判略增(该素材最高音 1480Hz),故维持 1600。</summary>
     public double FMax { get; set; } = 1600;
 
     // pypYIN YinUtil.betaDist2:pYIN 论文 Beta(2) 阈值概率分布,100 个阈值 0.01..1.00
@@ -112,6 +118,18 @@ public sealed class PyinPitchDetector
         double minVal = 42.0;
         double sumProb = 0;
 
+        // 谷的概率累加:P(候选) = 对阈值分布自顶向下累计到 d'(tau) 处
+        void Accumulate(int tau)
+        {
+            int ci = 99;
+            while (ci > -1 && 0.01 + ci * 0.01 > _cmndf[tau])
+            {
+                _prob[tau] += BetaDist2[ci];
+                ci--;
+            }
+            sumProb += _prob[tau];
+        }
+
         int ti = minTau;
         while (ti + 1 < maxTau)
         {
@@ -124,14 +142,7 @@ public sealed class PyinPitchDetector
                     minVal = _cmndf[ti];
                     minInd = ti;
                 }
-                // P(候选) = 对阈值分布自顶向下累计到 d'(tau) 处
-                int ci = 99;
-                while (ci > -1 && 0.01 + ci * 0.01 > _cmndf[ti])
-                {
-                    _prob[ti] += BetaDist2[ci];
-                    ci--;
-                }
-                sumProb += _prob[ti];
+                Accumulate(ti);
                 ti++;
             }
             else
@@ -175,7 +186,45 @@ public sealed class PyinPitchDetector
         }
 
         ClassifyRegisterAndFixFalsetto(cands);
+        AttachHarmonicSupport(cands);
         return [.. cands];
+    }
+
+    /// <summary>
+    /// 给每个候选标注谱支撑度:
+    /// Sup = max(谱能量@f, @2f, @3f) / 帧内最强谱峰——该候选"是否在谱上有支撑";
+    /// Fnd = 谱能量@f / 帧内最强谱峰——该候选"自身基波是否真的在谱上"。
+    ///
+    /// 周期信号在 T、2T、3T… 处的 CMNDF 谷深度几乎相等(次谐波谷是周期性的必然
+    /// 结果,不是独立证据),因此候选表里常常同时有真基频与它的 1/2、1/3、1/4 次
+    /// 谐波,概率相当。而 HMM 的转移窗口只有 ±5 箱(±1 半音)、中间箱没有候选时
+    /// 观测为 0 会让路径归零——所以状态一旦落在次谐波上就再也回不来,短促高音
+    /// 会在整个持续期间被显示成低 2~4 个八度。此时观测概率本身可能完全正确
+    /// (实测:645Hz 候选概率 0.850、162Hz 幻音 0.005,输出仍是 162Hz)。
+    ///
+    /// 两个量配合使用(见 PyinMonoPitch.MapStateToFreq):
+    /// - 真基频弱(假声/头声"基波弱、2 次谐波反超")时 Sup 仍达 0.7+(它的 2f 就是
+    ///   那个强谱峰),而次谐波幻音的 f、2f、3f 三处同时接近零,Sup 只有 0.07 左右
+    ///   ——实测正确帧 0.71~0.79、幻音帧 0.07,用 Sup 判断"报告的音高是不是幻音";
+    /// - 但次谐波候选(比真基频低一个八度)的 Sup 会被真基频虚高,只有 Fnd 能识别
+    ///   它自己没有基波,故"挑替身"用 Fnd。
+    /// </summary>
+    private void AttachHarmonicSupport(List<PyinCandidate> cands)
+    {
+        if (cands.Count == 0) return;
+        double specMax = 0;
+        for (int j = 1; j < Y - 1; j++)
+        {
+            if (_spec[j] > specMax) specMax = _spec[j];
+        }
+        if (specMax <= 0) return;
+        for (int i = 0; i < cands.Count; i++)
+        {
+            double f = 440.0 * Math.Pow(2, (cands[i].Midi - 69) / 12.0);
+            double own = SpecAt(f);
+            double s = Math.Max(own, Math.Max(SpecAt(2 * f), SpecAt(3 * f)));
+            cands[i] = cands[i] with { Sup = s / specMax, Fnd = own / specMax };
+        }
     }
 
     /// <summary>

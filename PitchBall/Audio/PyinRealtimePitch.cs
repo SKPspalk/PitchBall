@@ -21,11 +21,18 @@ public sealed class PyinRealtimePitch
     private const int PsiRingFrames = 160; // psi 环容量(≥ 滞后 + 余量)
     private const double ObsAlpha = 0.4;   // 观测时间平滑系数
 
+    /// <summary>
+    /// YIN 候选可信度(官方 pYIN 的 yinTrust)。0.5 时弱高音的有声判决在边际上
+    /// 抖动,会随帧尾位置时有时无;离线管线为此已改用 0.7(见 FileAnalyzer 的
+    /// 分段解码注释),实时路径此前仍是 0.5——弱高音因此比离线更容易丢。
+    /// </summary>
+    private const double YinTrust = 0.7;
+
     private readonly PyinPitchDetector _yin = new();
     private readonly List<PyinCandidate[]> _candRing = new(PsiRingFrames);
     private readonly double[] _obsSmooth = new double[PyinMonoPitch.StateCount];
     private bool _obsFirst = true;
-    private PyinMonoPitch _hmm = new(PyinMonoPitch.RefHopSeconds);
+    private PyinMonoPitch _hmm = new(PyinMonoPitch.RefHopSeconds, YinTrust);
     private double _hmmRate = 44100;
     private long _frameCount;   // 已前向的观测帧数
     private long _candBase;     // _candRing[0] 的绝对帧序
@@ -39,7 +46,7 @@ public sealed class PyinRealtimePitch
     {
         if (sampleRate != _hmmRate)
         {
-            _hmm = new PyinMonoPitch(SubHop / sampleRate);
+            _hmm = new PyinMonoPitch(SubHop / sampleRate, YinTrust);
             _hmmRate = sampleRate;
             Reset();
         }
@@ -70,7 +77,8 @@ public sealed class PyinRealtimePitch
 
         // 人声帧间候选抖动时,给有声箱加微量地板概率,让路径可以滑过 1-3 个
         // 无支持帧,避免频繁退出/进入导致显示断断续续(强贝斯/鼓点瞬态同样受益)。
-        // 地板 ≈ 无声箱观测的 8%,远低于无声箱,不会引入虚假音高。
+        // 地板 ≈ 无声箱观测的 8%,远低于无声箱——它只能让有声路径"滑行",
+        // 不能单独把无声帧翻成有声(有声判决的灵敏度由 YinTrust 决定)。
         for (int p = 0; p < PyinMonoPitch.NPitch; p++)
         {
             if (obs[p] < 2.5e-4) obs[p] = 2.5e-4;

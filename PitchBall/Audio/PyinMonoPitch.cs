@@ -380,9 +380,30 @@ public sealed class PyinMonoPitch
         return cur;
     }
 
+    /// <summary>谱支撑度 Sup 低于此值视为"该音高在谱上几乎不存在"(次谐波幻音)。
+    /// 实测:正确帧约 0.71~0.79,幻音帧约 0.07,取 0.15 作分界留足余量。</summary>
+    private const double SupAbsent = 0.15;
+
+    /// <summary>替身候选"自身基波"所需的最低谱支撑度(真基频实测 0.48~1.0;低一个
+    /// 八度的次谐波候选虽然 Sup 被虚高,但自身基波接近零,会在这里被排除)。</summary>
+    private const double FndPresent = 0.40;
+
     /// <summary>
     /// 状态 → 频率(与 pypYIN MonoPitch.process 一致):
     /// 有声状态取该帧候选中最接近 HMM 箱频率者,无声状态返回 0。
+    ///
+    /// 兜底(次谐波幻音):HMM 的转移窗口只有 ±5 箱(±1 半音),跨八度要在十几个
+    /// 中间箱上连续转移,而中间箱没有候选(观测为 0)会让路径归零——所以状态一旦
+    /// 落在次谐波上就再也回不来,即使观测概率完全支持真基频(实测 645Hz 候选
+    /// 0.850 对 162Hz 幻音 0.005,输出仍是 162Hz),整段高音都被显示成低 2~4 个
+    /// 八度(实测 142 分钟现场录音中 131s 段:E5 被报成 E3,与独立的手写 YIN 路径
+    /// 判定不符,频谱上 162/324/486Hz 三处也确实没有能量)。
+    ///
+    /// 触发条件刻意收得很窄——状态对应的候选在谱上**连低阶谐波都没有**
+    /// (Sup &lt; 0.15),说明本帧根本没有这个音高;此时改报"自身基波在谱上立得住"
+    /// (Fnd &gt; 0.40)、概率不低于最强候选 1/4、相距 ≥3 半音的候选。
+    /// 真基频弱(假声/头声)的帧不会触发:它们的 Sup 达 0.7+(2 次谐波就是那个强谱峰),
+    /// 实测 1200s 段的 F5 假声 Sup≈0.79,规则不介入。
     /// </summary>
     public double MapStateToFreq(int state, IReadOnlyList<PyinCandidate> candsOfFrame)
     {
@@ -390,11 +411,44 @@ public sealed class PyinMonoPitch
         double hmmFreq = _freqs[state];
         double bestFreq = 0;
         double leastDist = 10000.0;
-        foreach (var c in candsOfFrame)
+        int nearIdx = -1;
+        for (int i = 0; i < candsOfFrame.Count; i++)
         {
-            double freq = 440.0 * Math.Pow(2, (c.Midi - 69) / 12.0);
+            double freq = 440.0 * Math.Pow(2, (candsOfFrame[i].Midi - 69) / 12.0);
             double dist = Math.Abs(hmmFreq - freq);
-            if (dist < leastDist) { leastDist = dist; bestFreq = freq; }
+            if (dist < leastDist) { leastDist = dist; bestFreq = freq; nearIdx = i; }
+        }
+
+        if (nearIdx >= 0 && candsOfFrame.Count > 1 && candsOfFrame[nearIdx].Sup < SupAbsent)
+        {
+            double maxProb = 0;
+            for (int i = 0; i < candsOfFrame.Count; i++)
+            {
+                if (candsOfFrame[i].Prob > maxProb) maxProb = candsOfFrame[i].Prob;
+            }
+            if (maxProb > 0)
+            {
+                int altIdx = -1;
+                double altFnd = 0;
+                for (int i = 0; i < candsOfFrame.Count; i++)
+                {
+                    if (i == nearIdx) continue;
+                    if (candsOfFrame[i].Prob < 0.25 * maxProb) continue;
+                    if (candsOfFrame[i].Fnd > altFnd)
+                    {
+                        altFnd = candsOfFrame[i].Fnd;
+                        altIdx = i;
+                    }
+                }
+                if (altIdx >= 0 && altFnd > FndPresent)
+                {
+                    double fAlt = 440.0 * Math.Pow(2, (candsOfFrame[altIdx].Midi - 69) / 12.0);
+                    if (Math.Abs(12 * Math.Log2(fAlt / hmmFreq)) >= 3)
+                    {
+                        bestFreq = fAlt;
+                    }
+                }
+            }
         }
         return bestFreq;
     }
