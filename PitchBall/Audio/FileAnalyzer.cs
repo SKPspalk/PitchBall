@@ -25,9 +25,12 @@ public static class FileAnalyzer
     {
         // ConfigureAwait(false):库内等待不捕获 UI 上下文,避免调用方同步等待时死锁
         return await Task.Run(
-            () => (algorithm ?? "Yin") == "Pyin"
-                ? AnalyzePyin(path, progress, ct)
-                : Analyze(path, progress, ct),
+            () => (algorithm ?? "Yin") switch
+            {
+                "Pyin" => AnalyzePyin(path, progress, ct),
+                "Rmvpe" => AnalyzeRmvpe(path, progress, ct),
+                _ => Analyze(path, progress, ct),
+            },
             ct).ConfigureAwait(false);
     }
 
@@ -151,6 +154,54 @@ public static class FileAnalyzer
 
         progress?.Report(1.0);
         return result;
+    }
+
+    /// <summary>
+    /// 显示级连续性后处理(离线与实时一致):短丢帧保持上一音高;以慢速锚点判断
+    /// 异常跳变/滑落(超过约 ±7 半音)时保持锚点(连拒超过时限才接受新音高线),
+    /// 抹平直升直降与"触底"。pYIN 与 RMVPE 两条路径共用。
+    /// </summary>
+    internal static void ApplyDisplayPostprocess(double[] freqs, double fps,
+        double holdSeconds = 0.28, double maxRejectSeconds = 1.2)
+    {
+        int holdFrames = Math.Max(1, (int)Math.Round(holdSeconds * fps));
+        int maxRejectFrames = Math.Max(1, (int)Math.Round(maxRejectSeconds * fps));
+        const double anchorAlpha = 0.2;
+        double lastF = 0, anchorF = 0;
+        int holdLeft = 0, rejectCount = 0;
+        for (int i = 0; i < freqs.Length; i++)
+        {
+            double f = freqs[i];
+            if (f > 0)
+            {
+                if (anchorF <= 0) anchorF = f;
+                double ratio = f / anchorF;
+                if (ratio > 1.5 || ratio < 0.667)
+                {
+                    rejectCount++;
+                    if (rejectCount > maxRejectFrames) { anchorF = f; rejectCount = 0; }
+                    else f = anchorF;
+                }
+                else
+                {
+                    anchorF += anchorAlpha * (f - anchorF);
+                    rejectCount = 0;
+                }
+                lastF = f;
+                holdLeft = holdFrames;
+                freqs[i] = f;
+            }
+            else if (lastF > 0 && holdLeft > 0)
+            {
+                freqs[i] = lastF;
+                holdLeft--;
+            }
+            else
+            {
+                lastF = 0;
+                holdLeft = 0;
+            }
+        }
     }
 
     private static float ComputeRms(List<float> samples)
@@ -316,57 +367,8 @@ public static class FileAnalyzer
             freqs[i] = hmm.MapStateToFreq(statePath[i], candFrames[i]);
         }
 
-        // 显示级连续性后处理(与实时引擎一致):
-        // 短丢帧保持上一音高;以慢速锚点判断异常跳变/滑落(超过约 ±7 半音),
-        // 异常时保持锚点(连拒 >1.2s 才接受新音高线),抹平直升直降与"触底"
-        double lastF = 0;
-        double anchorF = 0;
-        int holdLeft = 0;
-        int rejectCount = 0;
-        const int holdFrames = 12;      // ≈0.28s @ 43fps
-        const int maxRejectFrames = 52; // ≈1.2s @ 43fps
-        const double anchorAlpha = 0.2;
-        for (int i = 0; i < nFrames; i++)
-        {
-            double f = freqs[i];
-            if (f > 0)
-            {
-                if (anchorF <= 0) anchorF = f;
-                double ratio = f / anchorF;
-                if (ratio > 1.5 || ratio < 0.667)
-                {
-                    rejectCount++;
-                    if (rejectCount > maxRejectFrames)
-                    {
-                        // 连拒超过时限:接受新音高线
-                        anchorF = f;
-                        rejectCount = 0;
-                    }
-                    else
-                    {
-                        f = anchorF;
-                    }
-                }
-                else
-                {
-                    anchorF += anchorAlpha * (f - anchorF);
-                    rejectCount = 0;
-                }
-                lastF = f;
-                holdLeft = holdFrames;
-                freqs[i] = f;
-            }
-            else if (lastF > 0 && holdLeft > 0)
-            {
-                freqs[i] = lastF;
-                holdLeft--;
-            }
-            else
-            {
-                lastF = 0;
-                holdLeft = 0;
-            }
-        }
+        // 显示级连续性后处理(与实时引擎一致):pYIN 与 RMVPE 两条路径共用
+        ApplyDisplayPostprocess(freqs, AnalysisRate / (double)PyinHop);
 
         var counts = new Dictionary<int, int>();
         for (int i = 0; i < nFrames; i++)
@@ -391,6 +393,147 @@ public static class FileAnalyzer
             if (kv.Key > result.MaxMidi) result.MaxMidi = kv.Key;
         }
         result.VoicedRatio = freqs.Length > 0 ? voiced / (double)freqs.Length : 0;
+
+        progress?.Report(1.0);
+        return result;
+    }
+
+    /// <summary>
+    /// RMVPE 离线分析:解码为 16kHz 单声道 → 每 10ms 一帧的 RMVPE 推理
+    /// (60s 分块,块间保留 1s 重叠并丢弃重叠段输出)→ 与其它算法相同的
+    /// 显示级后处理与输出格式。模型判据是音色特征,混音中伴奏更强时仍能锁人声。
+    /// </summary>
+    private static AnalysisResult AnalyzeRmvpe(string path, IProgress<double>? progress, CancellationToken ct)
+    {
+        const int Rate = RmvpePitchEngine.SampleRate;    // 16000
+        const int HopFrames = 100;                       // 每 10ms 一帧
+        const double Thred = 0.03;                       // 置信度阈值(与上游默认一致)
+        const int ChunkSeconds = 60;
+        const int OverlapSeconds = 1;
+        const int chunkSamples = ChunkSeconds * Rate;
+        const int overlapSamples = OverlapSeconds * Rate;
+        const int overlapFrames = OverlapSeconds * HopFrames;
+
+        var result = new AnalysisResult
+        {
+            FilePath = path,
+            FileName = Path.GetFileName(path),
+            PitchRate = HopFrames,
+            Algorithm = "RMVPE",
+        };
+
+        using var reader = OpenReader(path);
+        result.Duration = reader.TotalTime.TotalSeconds;
+
+        var target = new WaveFormat(Rate, 32, 1);
+        var fmt = reader.WaveFormat;
+        IWaveProvider stream;
+        if (fmt.SampleRate == target.SampleRate && fmt.Channels == 1 &&
+            fmt.Encoding == WaveFormatEncoding.IeeeFloat)
+        {
+            stream = reader;
+        }
+        else
+        {
+            var samples = reader.ToSampleProvider();
+            if (fmt.Channels != 1) samples = samples.ToMono();
+            stream = new WdlResamplingSampleProvider(samples, Rate).ToWaveProvider();
+        }
+
+        if (!RmvpePitchEngine.Available)
+        {
+            // 模型未内嵌:退化为原 YIN,避免给出错误结果
+            return Analyze(path, progress, ct);
+        }
+
+        var peaks = new List<float>(Math.Max(64, (int)(result.Duration * PeaksPerSecond)));
+        var freqs = new List<double>(Math.Max(64, (int)(result.Duration * HopFrames)));
+        var waveAcc = new List<float>(PeaksPerSecond);
+        int peakChunk = Rate / PeaksPerSecond;           // 320 → 50 点/秒
+
+        // 工作缓冲:至少一个完整块 + 上一块尾巴
+        var buffer = new float[chunkSamples + overlapSamples + 16384];
+        var byteBuf = ArrayPool<byte>.Shared.Rent(16384 * 4);
+        var floatBuf = ArrayPool<float>.Shared.Rent(16384);
+        try
+        {
+            using var eng = new RmvpePitchEngine();
+            int carry = 0;                 // buffer 开头来自上一块的样本数
+            double t = 0;
+            bool eof = false;
+            const int want = chunkSamples + overlapSamples;
+            while (true)
+            {
+                // 先把 buffer 攒到一块(或到文件尾)
+                while (!eof && carry < want)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    int wantBytes = Math.Min(byteBuf.Length, (want - carry) * 4);
+                    int read = stream.Read(byteBuf, 0, wantBytes);
+                    if (read <= 0) { eof = true; break; }
+                    int n = read / 4;
+                    Buffer.BlockCopy(byteBuf, 0, floatBuf, 0, read);
+
+                    // 波形峰值(每 320 点一档 → 50 点/秒)
+                    for (int i = 0; i < n; i++)
+                    {
+                        waveAcc.Add(floatBuf[i]);
+                        if (waveAcc.Count >= peakChunk)
+                        {
+                            peaks.Add(ComputeRms(waveAcc));
+                            waveAcc.Clear();
+                        }
+                    }
+                    Array.Copy(floatBuf, 0, buffer, carry, n);
+                    carry += n;
+                    t += n / (double)Rate;
+                }
+                if (carry == 0) break;
+
+                var seg = new float[carry];
+                Array.Copy(buffer, 0, seg, 0, carry);
+                var (f, c) = eng.Infer(seg);
+                // 非尾块:丢掉末尾 overlapFrames 帧(下一块会用重叠样本重算这段)
+                int usable = eof ? f.Length : Math.Max(0, f.Length - overlapFrames);
+                for (int i = 0; i < usable; i++)
+                {
+                    freqs.Add(c[i] >= Thred ? f[i] : 0.0);
+                }
+                progress?.Report(Math.Min(0.97, t / Math.Max(0.1, result.Duration) * 0.97));
+                if (eof) break;
+
+                int keep = Math.Min(overlapSamples, carry);
+                Array.Copy(buffer, carry - keep, buffer, 0, keep);
+                carry = keep;
+            }
+
+            var freqArr = freqs.ToArray();
+            ApplyDisplayPostprocess(freqArr, HopFrames);
+
+            var counts = new Dictionary<int, int>();
+            foreach (double f in freqArr)
+            {
+                if (f <= 0) continue;
+                int midi = NoteNames.FrequencyToMidiNote(f);
+                counts[midi] = counts.GetValueOrDefault(midi) + 1;
+            }
+            int voiced = 0;
+            foreach (var kv in counts)
+            {
+                result.NoteCounts[kv.Key] = kv.Value;
+                voiced += kv.Value;
+                if (kv.Key < result.MinMidi) result.MinMidi = kv.Key;
+                if (kv.Key > result.MaxMidi) result.MaxMidi = kv.Key;
+            }
+            result.WavePeaks = peaks.ToArray();
+            result.PitchFreqs = freqArr;
+            result.VoicedRatio = freqArr.Length > 0 ? voiced / (double)freqArr.Length : 0;
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(byteBuf);
+            ArrayPool<float>.Shared.Return(floatBuf);
+        }
 
         progress?.Report(1.0);
         return result;

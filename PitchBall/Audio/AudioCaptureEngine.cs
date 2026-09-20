@@ -50,8 +50,10 @@ public sealed class AudioCaptureEngine : IDisposable
     /// <summary>静音门限(RMS)。</summary>
     public double SilenceThreshold { get; set; } = 0.004;
 
-    /// <summary>音高算法:"Pyin"(pYIN,默认)/ "Yin"(原手写 YIN)。</summary>
+    /// <summary>音高算法:"Pyin"(pYIN,默认)/ "Yin"(原手写 YIN)/ "Rmvpe"(神经人声模型)。</summary>
     public string Algorithm { get; set; } = "Pyin";
+
+    private RmvpeRealtimePitch? _rmvpe;
 
     private void PostToUi(Action action) => UiDispatcher.Post(action);
 
@@ -204,6 +206,12 @@ public sealed class AudioCaptureEngine : IDisposable
                 freq = _pyin.Push(_frame.AsSpan(off, PyinPitchDetector.BlockSize), _sampleRate);
             }
         }
+        else if (Algorithm == "Rmvpe")
+        {
+            // RMVPE:后台线程按 0.25s 间隔对最近 1s 音频推理,这里取最新结果(不阻塞采集)
+            _rmvpe ??= new RmvpeRealtimePitch((int)Math.Round(_sampleRate));
+            freq = _rmvpe.Push(_frame, _sampleRate);
+        }
         else if (rms >= SilenceThreshold)
         {
             freq = _yin.GetPitch(_frame, _sampleRate);
@@ -263,6 +271,7 @@ public sealed class AudioCaptureEngine : IDisposable
         double level = Math.Min(1.0, rms * 8.0);
         var sample = new PitchSample(smoothed, level, now,
             Algorithm == "Pyin" ? _pyin.LastRegister : VocalRegister.Chest);
+        // 注:RMVPE 目前只输出音高与置信度,声区沿用真声标签(后续可按频谱量补)
         PostToUi(() => PitchUpdated?.Invoke(sample));
     }
 
@@ -304,6 +313,8 @@ public sealed class AudioCaptureEngine : IDisposable
     public void Stop()
     {
         IsCapturing = false;
+        try { _rmvpe?.Dispose(); } catch { }
+        _rmvpe = null;
         try { _waveIn?.StopRecording(); } catch { }
         try { _waveIn?.Dispose(); } catch { }
         _waveIn = null;

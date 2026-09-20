@@ -34,7 +34,8 @@ public partial class AnalyzeOptionsDialog : Window
 
     private void OnConfirmClick(object sender, RoutedEventArgs e)
     {
-        Algorithm = AlgoYinRadio.IsChecked == true ? "Yin" : "Pyin";
+        Algorithm = AlgoRmvpeRadio.IsChecked == true ? "Rmvpe"
+            : AlgoYinRadio.IsChecked == true ? "Yin" : "Pyin";
         Profile = ProfileCleanRadio.IsChecked == true ? "Clean"
             : ProfileLiveRadio.IsChecked == true ? "Live"
             : "Balanced";

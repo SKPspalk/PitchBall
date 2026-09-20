@@ -118,6 +118,16 @@ public partial class App : Application
             Shutdown();
             return;
         }
+        if (e.Args.Length > 0 && e.Args[0] == "--rmvpefile" && e.Args.Length > 1)
+        {
+            // --rmvpefile <path> [startSec] [endSec] [thred]  (RMVPE 诊断)
+            RunRmvpeFile(e.Args[1],
+                e.Args.Length > 2 && double.TryParse(e.Args[2], out double rv0) ? rv0 : 0,
+                e.Args.Length > 3 && double.TryParse(e.Args[3], out double rv1) ? rv1 : double.MaxValue,
+                e.Args.Length > 4 && double.TryParse(e.Args[4], out double rvt) ? rvt : 0.03);
+            Shutdown();
+            return;
+        }
         if (e.Args.Length > 0 && e.Args[0] == "--pyinsine")
         {
             RunPyinSine(e.Args.Length > 1 && double.TryParse(e.Args[1], out double sf) ? sf : 440,
@@ -164,7 +174,8 @@ public partial class App : Application
                     Console.WriteLine($"  进度 {pct,3}%  已用 {sw.Elapsed.TotalSeconds:F1}s");
                 }
             });
-            var result = FileAnalyzer.AnalyzeAsync(e.Args[1], progress, CancellationToken.None, "Pyin")
+            string benchAlgo = e.Args.Length > 2 ? e.Args[2] : "Pyin";
+            var result = FileAnalyzer.AnalyzeAsync(e.Args[1], progress, CancellationToken.None, benchAlgo)
                 .GetAwaiter().GetResult();
             sw.Stop();
             Console.WriteLine($"BENCH 耗时 {sw.Elapsed.TotalSeconds:F1}s 算法 {result.Algorithm} 帧数 {result.PitchFreqs.Length} 帧率 {result.PitchRate:F1} 有声比 {result.VoicedRatio:P1} 音域 {NoteNames.GetNoteName(result.MinMidi)}-{NoteNames.GetNoteName(result.MaxMidi)}");
@@ -241,7 +252,7 @@ public partial class App : Application
 
         Engine.A4Frequency = Settings.Current.A4Frequency;
         Engine.Smoothing = Settings.Current.Smoothing;
-        Engine.Algorithm = Settings.Current.PitchAlgorithm == "Yin" ? "Yin" : "Pyin";
+        Engine.Algorithm = Settings.Current.PitchAlgorithm;
         PyinPitchDetector.VocalProfile = ParseVocalProfile(Settings.Current.VocalProfile);
         Engine.PitchUpdated += OnPitchUpdated;
         Engine.StatusChanged += OnEngineStatus;
@@ -598,7 +609,7 @@ public partial class App : Application
                     Settings.Current.VocalProfile = dlg.Profile;
                     if (dlg.Remember) Settings.Current.AskOnAnalyze = false;
                     Settings.Save();
-                    Engine.Algorithm = dlg.Algorithm == "Yin" ? "Yin" : "Pyin";
+                    Engine.Algorithm = dlg.Algorithm;
                     PyinPitchDetector.VocalProfile = ParseVocalProfile(dlg.Profile);
                     MainWindow?.SyncSettingsControls();
                 }
@@ -1087,6 +1098,55 @@ public partial class App : Application
     }
 
     /// <summary>实时 pYIN 离线模拟(诊断用):与 AudioCaptureEngine 相同的子帧推进方式。</summary>
+    /// <summary>RMVPE 诊断:整段/区间跑 RMVPE 并逐帧打印(与 --pyinfile 同口径)。</summary>
+    private void RunRmvpeFile(string path, double startSec, double endSec, double thred)
+    {
+        AttachLogging();
+        if (!File.Exists(path)) { Console.WriteLine($"文件不存在: {path}"); return; }
+        if (!RmvpePitchEngine.Available)
+        {
+            Console.WriteLine("RMVPE 模型未内嵌(构建时 Assets/rmvpe_int8.onnx 不存在),该算法不可用");
+            return;
+        }
+        Console.WriteLine($"=== RMVPE 分析: {Path.GetFileName(path)} {startSec:F2}-{endSec:F2}s (阈值 {thred}) ===");
+
+        var samples = new List<float>();
+        using (var reader = FileAnalyzer.OpenReader(path))
+        {
+            var stream = new WdlResamplingSampleProvider(
+                reader.ToSampleProvider().ToMono(), RmvpePitchEngine.SampleRate);
+            var buf = new float[16384];
+            int n;
+            while ((n = stream.Read(buf, 0, buf.Length)) > 0) samples.AddRange(buf.AsSpan(0, n).ToArray());
+        }
+        var audio = samples.ToArray();
+        Console.WriteLine($"  16kHz 采样 {audio.Length} 点 ({audio.Length / 16000.0:F1}s)");
+
+        using var eng = new RmvpePitchEngine();
+        const int chunkFrames = 60 * 100;    // 60s/块(每帧 10ms)
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        int shown = 0;
+        for (int off = 0; off * 160 < audio.Length; off += chunkFrames)
+        {
+            int len = Math.Min(chunkFrames * 160, audio.Length - off * 160);
+            var seg = new float[len];
+            Array.Copy(audio, off * 160, seg, 0, len);
+            var (fr, cf) = eng.Infer(seg);
+            for (int i = 0; i < fr.Length; i++)
+            {
+                double t = off / 100.0 + i / 100.0;
+                if (t < startSec - 0.005 || t > endSec + 0.005) continue;
+                double f = cf[i] >= thred ? fr[i] : 0;
+                string note = f > 0 ? NoteNames.GetNoteName(NoteNames.FrequencyToMidiNote(f)) : "—";
+                Console.WriteLine($"RV {t,8:F3}s  f={f,7:F1}  {note,4}  conf={cf[i]:F3}");
+                shown++;
+            }
+        }
+        sw.Stop();
+        Console.WriteLine($"  命中区间 {shown} 帧, 用时 {sw.Elapsed.TotalSeconds:F2}s, 实时率 {sw.Elapsed.TotalSeconds / (audio.Length / 16000.0):F3}");
+        Console.WriteLine("=== 完成 ===");
+    }
+
     private void RunPyinRt(string path, double startSec, double endSec)
     {
         AttachLogging();

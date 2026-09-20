@@ -264,6 +264,7 @@
                                               SelectionChanged="OnPitchAlgoChanged">
                                         <ComboBoxItem Content="pYIN(HMM 平滑,推荐)"/>
                                         <ComboBoxItem Content="原 YIN(逐帧检测)"/>
+                                        <ComboBoxItem Content="RMVPE(神经人声模型,混音更稳)"/>
                                     </ComboBox>
                                     <TextBlock Text="人声场景(低音抑制策略)" FontSize="12" Margin="4,12,0,2"
                                                Foreground="{DynamicResource TextSecondaryBrush}"/>

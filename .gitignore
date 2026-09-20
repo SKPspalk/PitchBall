@@ -1,3 +1,7 @@
+# 神经网络模型(体积大,不入库;存在时才内嵌)
+PitchBall/Assets/rmvpe_int8.onnx
+PitchBall/Assets/rmvpe_mel_basis.f32
+
 # 构建产物
 bin/
 obj/

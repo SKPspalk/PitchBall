@@ -9,7 +9,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>PitchBall</AssemblyName>
     <RootNamespace>PitchBall</RootNamespace>
-    <Version>1.1.2</Version>
+    <Version>1.2.0</Version>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>Assets\PitchBall.ico</ApplicationIcon>
     <SatelliteResourceLanguages>zh-Hans;en</SatelliteResourceLanguages>
@@ -18,11 +18,21 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.30.0" />
     <PackageReference Include="NAudio" Version="2.2.1" />
   </ItemGroup>
 
   <ItemGroup>
     <Resource Include="Assets\PitchBall.ico" />
+  </ItemGroup>
+
+  <!-- RMVPE 人声音高模型(约 94MB,INT8 量化)。模型不入库:文件存在时才内嵌,
+       缺失时构建仍可通过,程序里该算法不可用。 -->
+  <ItemGroup Condition="Exists('Assets/rmvpe_int8.onnx')">
+    <EmbeddedResource Include="Assets/rmvpe_int8.onnx" />
+  </ItemGroup>
+  <ItemGroup Condition="Exists('Assets/rmvpe_mel_basis.f32')">
+    <EmbeddedResource Include="Assets/rmvpe_mel_basis.f32" />
   </ItemGroup>
 
 </Project>

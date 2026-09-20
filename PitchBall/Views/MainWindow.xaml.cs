@@ -350,7 +350,12 @@ public partial class MainWindow : Window
             SmoothSlider.Value = s.Smoothing;
             SmoothValueText.Text = $"音高平滑度:{s.Smoothing}";
 
-            PitchAlgoCombo.SelectedIndex = s.PitchAlgorithm == "Yin" ? 1 : 0;
+            PitchAlgoCombo.SelectedIndex = s.PitchAlgorithm switch
+            {
+                "Yin" => 1,
+                "Rmvpe" => 2,
+                _ => 0,
+            };
             VocalProfileCombo.SelectedIndex = s.VocalProfile switch
             {
                 "Clean" => 1,
@@ -946,7 +951,12 @@ public partial class MainWindow : Window
         if (PitchAlgoCombo.SelectedIndex < 0) return;
         var app = App.Instance;
         var s = app.Settings.Current;
-        s.PitchAlgorithm = PitchAlgoCombo.SelectedIndex == 0 ? "Pyin" : "Yin";
+        s.PitchAlgorithm = PitchAlgoCombo.SelectedIndex switch
+        {
+            1 => "Yin",
+            2 => "Rmvpe",
+            _ => "Pyin",
+        };
         app.Settings.Save();
         app.Engine.Algorithm = s.PitchAlgorithm;
         // 当前展示的文件分析用旧算法算的,切换后自动按新算法重新分析

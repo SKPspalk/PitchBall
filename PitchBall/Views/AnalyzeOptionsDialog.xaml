@@ -19,6 +19,8 @@
                          Foreground="{DynamicResource TextPrimaryBrush}" Margin="2,2"/>
             <RadioButton x:Name="AlgoYinRadio" Content="原 YIN(逐帧检测)" GroupName="Algo"
                          Foreground="{DynamicResource TextPrimaryBrush}" Margin="2,2"/>
+            <RadioButton x:Name="AlgoRmvpeRadio" Content="RMVPE(神经人声模型,混音更稳)" GroupName="Algo"
+                         Foreground="{DynamicResource TextPrimaryBrush}" Margin="2,2"/>
 
             <TextBlock Text="人声场景" FontSize="12" Margin="0,14,0,4"
                        Foreground="{DynamicResource TextSecondaryBrush}"/>
