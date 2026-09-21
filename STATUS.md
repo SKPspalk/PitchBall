@@ -7,8 +7,8 @@
 | 项 | 状态 |
 |---|---|
 | 已发布到 GitHub | **v1.2.0**（tag + Release + 251MB exe，SHA256 `148A5597…DB9B67`） |
-| 本地已完成、**尚未推送** | **v1.2.1**：提交 `44e280f`、tag `v1.2.1`、`publish/PitchBall.exe`（251.1MB，SHA256 `A9624FFD0F917A113BEFF8B7869952800A6A4C5B35DC98A7CC521F4DD5FFF4A5`）、README 已更新 |
-| v1.2.1 内容 | 修复"关于面板版本号写死为 v1.0.0"（原在 `MainWindow.xaml` 里硬编码，现运行时从程序集版本生成）；`NEURAL-PITCH.md` 的 GPU/DirectML 结论标注为过时 |
+| 本地已完成、**尚未推送** | **v1.2.1**：提交 `436f238`、tag `v1.2.1`、`publish/PitchBall.exe`（251.1MB，SHA256 `00736661787818A5…`(以 README 为准)）、README 已更新 |
+| v1.2.1 内容 | ① **修复实时 RMVPE 卡死 + 重采样失效**（详见下节）；② 修复关于面板版本号写死 v1.0.0（改为运行时取程序集版本）；③ 新增 `--rmvpert` 实时链路诊断；④ `NEURAL-PITCH.md` 的 GPU/DirectML 结论标注为过时 |
 | 未提交改动 | `PitchBall/App.xaml.cs`（新增 `--rmvpert` 实时链路诊断入口，已编译通过） |
 | 推送阻塞原因 | 网络：Clash 已停（7897 无监听）、Steam++ 的 hosts 重定向被清，`github.com`/`api.github.com` 超时。恢复一条再推即可 |
 
@@ -23,6 +23,24 @@ GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=/tmp/askpass.sh git -c credential.helper= push
 # Release: POST api.github.com/repos/SKPspalk/PitchBall/releases (见本轮会话里用过的 rel_v120.json 同法)
 # 附件: POST uploads.github.com/.../releases/<id>/assets?name=PitchBall.exe
 ```
+
+## 一之二、v1.2.1 修掉的两个实时 bug（自动化测试抓到的）
+
+**v1.2.0（已发布的那个版本）的实时 RMVPE 是坏的**：一开就会卡死界面。两处根因：
+
+1. **死循环**：实时封装用 NAudio `BufferedWaveProvider`（`ReadFully=true`，缺数据补零）+
+   `WdlResamplingSampleProvider` 做 push 语义重采样；因为 `Read` 永远不返回 0，
+   `while (Read(...) > 0)` 排空循环永不退出 → 卡住采集回调 → 界面冻结。
+2. **重采样失效**：即使绕开死循环，该链路输出的音频也无法被模型识别（窗内最大置信度只有
+   **0.002**，而离线同一时刻是 0.85）。
+
+**修法**：自写 `PitchBall/Audio/SincResampler.cs`（Hann 窗 sinc 分数重采样，截止取输出奈奎斯特，
+自带抗混叠；状态明确、可验证），并按"本次写入量"精确排空。
+**验证**（`--rmvpert`）：实时与离线输出一致（5.11s 实时 520.6Hz / 离线 520.8Hz），
+窗内置信度 0.002 → **0.966**；发布版 exe 也复测通过。
+
+遗留的小改进：实时取"距窗尾 5 帧"的结果，快速音型（如 6.4s 处 D5 的跳进）会慢一拍；
+可改成窗长 2s + 取距尾 ~15 帧，或融合置信度最高的帧。
 
 ## 二、v1.2.0 做了什么（已发布）
 
@@ -58,7 +76,7 @@ GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=/tmp/askpass.sh git -c credential.helper= push
 ## 四、待办
 
 1. **推送 v1.2.1 + 建 Release**（等网络；命令见上）。注意：v1.2.0 的 Release 里那个 exe 关于面板会显示 v1.0.0。
-2. **跑一次 `--rmvpert` 验证**（已编译通过，运行被中断）：`PitchBall.exe --rmvpert <wav> 4.8 7.2 44100`，期望在 5.0~6.4s 输出 ≈520~597Hz（与离线路径一致）。
+2. ~~跑一次 `--rmvpert` 验证~~ **已完成**：实测实时 520.6Hz vs 离线 520.8Hz ✓（并借此发现并修掉了两个实时 bug，见上）。
 3. **实时路径的最终确认**：`--rmvpert` 只覆盖到"重采样→环形缓冲→后台推理"；真实麦克风/系统声音的端到端体验仍需用户按 10 秒验证（更新频率约 4 次/s、延迟约 0.3~0.5s）。
 4. **RMVPE 的声区标注**目前统一为真声（它只输出音高+置信度）；要恢复"真声/混声/假声"需把原挂在 pYIN 候选上的判据改成频谱量移植。
 5. **可选**：给设置面板的无名控件加 `AutomationProperties.AutomationId`（XAML 十几行），让 UI 自动化脚本稳定（现在只能靠"编号会漂"的索引）。
