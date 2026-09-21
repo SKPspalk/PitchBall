@@ -22,6 +22,12 @@
 
 **v1.2.1**
 
+- **修复:实时模式下 RMVPE 会让界面卡死。** 实时封装原先用 NAudio 的
+  `BufferedWaveProvider`+`WdlResamplingSampleProvider` 做 push 语义的重采样,其中
+  `ReadFully=true` 使排空循环永远读不到 0(死循环卡住采集回调),且输出的音频实际无法被
+  模型识别(窗内置信度只有 0.002)。现改为自写、可验证的 Hann 窗 sinc 分数重采样
+  (`SincResampler`,截止取输出奈奎斯特自带抗混叠)。实测同一段音频实时与离线输出一致
+  (5.11s 实时 520.6Hz / 离线 520.8Hz),窗内置信度 0.002 → 0.966。
 - **修复:关于面板里版本号一直显示 v1.0.0。** 该文本原先在 `MainWindow.xaml` 里写死,升级后不会变;
   现改为运行时从程序集版本生成(以后升级自动同步)。
 - 附带:新手引导状态重置为未读;`NEURAL-PITCH.md` 中关于 GPU/DirectML 的过时结论已标注并指向

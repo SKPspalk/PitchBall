@@ -128,6 +128,16 @@ public partial class App : Application
             Shutdown();
             return;
         }
+        if (e.Args.Length > 0 && e.Args[0] == "--rmvpert" && e.Args.Length > 1)
+        {
+            // --rmvpert <path> [startSec] [endSec] [rate]  实时 RMVPE 链路诊断(不需要麦克风)
+            RunRmvpeRt(e.Args[1],
+                e.Args.Length > 2 && double.TryParse(e.Args[2], out double q0) ? q0 : 0,
+                e.Args.Length > 3 && double.TryParse(e.Args[3], out double q1) ? q1 : double.MaxValue,
+                e.Args.Length > 4 && int.TryParse(e.Args[4], out int qr) ? qr : 44100);
+            Shutdown();
+            return;
+        }
         if (e.Args.Length > 0 && e.Args[0] == "--pyinsine")
         {
             RunPyinSine(e.Args.Length > 1 && double.TryParse(e.Args[1], out double sf) ? sf : 440,
@@ -1156,6 +1166,58 @@ public partial class App : Application
         }
         sw.Stop();
         Console.WriteLine($"  命中区间 {shown} 帧, 用时 {sw.Elapsed.TotalSeconds:F2}s, 实时率 {sw.Elapsed.TotalSeconds / (audio.Length / 16000.0):F3}");
+        Console.WriteLine("=== 完成 ===");
+    }
+
+    /// <summary>
+    /// 实时 RMVPE 链路诊断:把文件按设备采样率解码,再按采集帧长(4096)与真实时间节奏
+    /// 喂给 RmvpeRealtimePitch,验证 重采样→环形缓冲→后台推理→取最新值 这条链路。
+    /// 不依赖麦克风/系统声音,可与离线路径对照(同一时间点应给出相近音高)。
+    /// </summary>
+    private void RunRmvpeRt(string path, double startSec, double endSec, int rate)
+    {
+        AttachLogging();
+        if (!File.Exists(path)) { Console.WriteLine($"文件不存在: {path}"); return; }
+        if (!RmvpePitchEngine.Available)
+        {
+            Console.WriteLine("RMVPE 模型未内嵌,该算法不可用");
+            return;
+        }
+        Console.WriteLine($"=== RMVPE 实时链路诊断: {Path.GetFileName(path)} {startSec:F2}-{endSec:F2}s @{rate}Hz ===");
+
+        var samples = new List<float>();
+        using (var reader = FileAnalyzer.OpenReader(path))
+        {
+            var stream = new WdlResamplingSampleProvider(reader.ToSampleProvider().ToMono(), rate);
+            var buf = new float[16384];
+            int n;
+            while ((n = stream.Read(buf, 0, buf.Length)) > 0) samples.AddRange(buf.AsSpan(0, n).ToArray());
+        }
+        var audio = samples.ToArray();
+        Console.WriteLine($"  设备采样 {audio.Length} 点 @{rate}Hz ({audio.Length / (double)rate:F1}s)");
+
+        const int frameSize = AudioCaptureEngine.FrameSize;   // 4096,与采集一致
+        using var rt = new RmvpeRealtimePitch(rate);
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        int frames = audio.Length / frameSize;
+        int shown = 0;
+        for (int i = 0; i < frames; i++)
+        {
+            double t = i * (double)frameSize / rate;
+            double f = rt.Push(audio.AsSpan(i * frameSize, frameSize), rate);
+            if (t + frameSize / (double)rate >= startSec && t <= endSec)
+            {
+                string note = f > 0 ? NoteNames.GetNoteName(NoteNames.FrequencyToMidiNote(f)) : "—";
+                Console.WriteLine($"RT {t,8:F3}s  f={f,7:F1}  {note,4}");
+                shown++;
+            }
+            // 按真实时间节奏推入(检验实时行为:后台推理与"先返回上次值"的语义)
+            double target = (i + 1) * (double)frameSize / rate;
+            int waitMs = (int)((target - sw.Elapsed.TotalSeconds) * 1000);
+            if (waitMs > 0) System.Threading.Thread.Sleep(waitMs);
+        }
+        Console.WriteLine($"  命中区间 {shown} 帧, 用时 {sw.Elapsed.TotalSeconds:F1}s(应≈音频时长)");
+        Console.WriteLine($"  诊断: 引擎可用={RmvpePitchEngine.Available} 推理次数={rt.InferCount} 环内样本={rt.RingCount} 错误={rt.LastError ?? "无"} 窗内最大置信={rt.LastMaxConf:F3} 最佳帧位置(距尾)={rt.LastBestIdxFromEnd} 该帧频率={rt.LastBestFreq:F1} 环内峰值={rt.RingMaxAbs:F4} 窗内峰值={rt.WinMaxAbs:F4} 窗长={rt.WinLen} 窗过零率={rt.WinZcr:F0}/s");
         Console.WriteLine("=== 完成 ===");
     }
 

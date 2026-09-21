@@ -19,8 +19,8 @@ public sealed class RmvpeRealtimePitch : IDisposable
     private const double CalibMargin = 0.03;                // 置信度阈值(与离线一致)
 
     private readonly RmvpePitchEngine? _engine;
-    private readonly BufferedWaveProvider? _buffered;
-    private readonly WdlResamplingSampleProvider? _resampler;
+    private SincResampler? _resampler;
+    private readonly int _deviceRate;
     private readonly float[]? _ring;                         // 16kHz 环形缓冲
     private readonly float[] _readBuf = new float[16384];
     private readonly object _lock = new();
@@ -30,6 +30,23 @@ public sealed class RmvpeRealtimePitch : IDisposable
     private volatile float _lastFreq;
     private volatile bool _busy;
 
+    /// <summary>诊断:已完成的推理次数。</summary>
+    public int InferCount;
+    /// <summary>诊断:最近一次推理的异常信息(为空表示正常)。</summary>
+    public string? LastError;
+    /// <summary>诊断:窗内最大置信度与对应帧位置(距窗尾的帧数)。</summary>
+    public double LastMaxConf;
+    public int LastBestIdxFromEnd;
+    public double LastBestFreq;
+    /// <summary>诊断:环内与窗内样本的最大绝对值(0=空/静音)。</summary>
+    public double RingMaxAbs;
+    public double WinMaxAbs;
+    /// <summary>诊断:当前窗的过零率(次/秒,按 16kHz 计)与样本数。</summary>
+    public double WinZcr;
+    public int WinLen;
+    /// <summary>诊断:环形缓冲当前样本数。</summary>
+    public int RingCount { get { lock (_lock) return _ringCount; } }
+
     public RmvpeRealtimePitch(int deviceRate)
     {
         if (!RmvpePitchEngine.Available) return;
@@ -37,28 +54,19 @@ public sealed class RmvpeRealtimePitch : IDisposable
         int ringLen = (int)(Rate * (WindowSeconds + IntervalSeconds + 1.0));
         _ring = new float[ringLen];
 
-        _buffered = new BufferedWaveProvider(new WaveFormat(deviceRate, 32, 1))
-        {
-            BufferDuration = TimeSpan.FromSeconds(4),
-            DiscardOnBufferOverflow = true,
-            ReadFully = true,               // 数据不足时补零,避免 Read 返回 0 阻塞
-        };
-        _resampler = new WdlResamplingSampleProvider(_buffered.ToSampleProvider(), Rate);
+        _deviceRate = deviceRate;
+        _resampler = new SincResampler(deviceRate, Rate);
     }
 
     /// <summary>推入一帧设备采样率的单声道样本,返回当前最新的基频(0=未检出)。</summary>
     public double Push(ReadOnlySpan<float> frame, double sampleRate)
     {
-        if (_engine == null || _ring == null || _buffered == null || _resampler == null) return 0;
-        if (Math.Abs(_buffered.WaveFormat.SampleRate - sampleRate) > 1) return _lastFreq;
+        if (_engine == null || _ring == null || _resampler == null) return 0;
 
-        // float → byte 直塞缓冲(不阻塞)
-        var bytes = new byte[frame.Length * 4];
-        for (int i = 0; i < frame.Length; i++) BitConverter.TryWriteBytes(bytes.AsSpan(i * 4), frame[i]);
         lock (_lock)
         {
-            _buffered.AddSamples(bytes, 0, bytes.Length);
-            // 把可用的 16kHz 数据全部读进环形缓冲
+            _resampler.Push(frame);
+            // 把当前可用的 16kHz 输出全部读进环形缓冲(Read 返回 0 即输入不足,安全)
             int n;
             while ((n = _resampler.Read(_readBuf, 0, _readBuf.Length)) > 0)
             {
@@ -69,8 +77,10 @@ public sealed class RmvpeRealtimePitch : IDisposable
                     if (_ringCount < _ring.Length) _ringCount++;
                 }
                 _sinceInfer += n;
-                if (n < _readBuf.Length) break;
             }
+            double mx = 0;
+            for (int i = 0; i < _ringCount; i++) { double a = Math.Abs(_ring[i]); if (a > mx) mx = a; }
+            RingMaxAbs = mx;
             bool due = _sinceInfer >= (int)(IntervalSeconds * Rate);
             if (due) _sinceInfer = 0;
             if (!due || _busy || _ringCount < (int)(WindowSeconds * Rate)) return _lastFreq;
@@ -87,11 +97,29 @@ public sealed class RmvpeRealtimePitch : IDisposable
                 win[i] = _ring[idx];
             }
         }
+        double wmx = 0; int zc = 0;
+        for (int i = 1; i < win.Length; i++)
+        {
+            double a = Math.Abs(win[i]); if (a > wmx) wmx = a;
+            if ((win[i - 1] < 0) != (win[i] < 0)) zc++;
+        }
+        WinZcr = zc / (win.Length / (double)Rate);
+        WinLen = win.Length;
+        WinMaxAbs = wmx;
         Task.Run(() =>
         {
             try
             {
                 var (f, c) = _engine.Infer(win);
+                InferCount++;
+                if (f.Length > 0)
+                {
+                    int bi = 0;
+                    for (int k = 1; k < c.Length; k++) if (c[k] > c[bi]) bi = k;
+                    LastMaxConf = c[bi];
+                    LastBestIdxFromEnd = f.Length - 1 - bi;
+                    LastBestFreq = f[bi];
+                }
                 if (f.Length >= 8)
                 {
                     // 末尾几帧的上下文不完整,取回退 5 帧处的结果
@@ -104,9 +132,9 @@ public sealed class RmvpeRealtimePitch : IDisposable
                     _lastFreq = 0;
                 }
             }
-            catch
+            catch (Exception ex)
             {
-                // 推理异常不影响采集
+                LastError = ex.GetType().Name + ": " + ex.Message;   // 诊断:不吞异常
             }
             finally
             {
@@ -125,7 +153,8 @@ public sealed class RmvpeRealtimePitch : IDisposable
             _ringPos = 0;
             _sinceInfer = 0;
             _lastFreq = 0;
-            try { _buffered?.ClearBuffer(); } catch { }
+            // 重建重采样器 = 清空其内部相位与缓冲
+            if (_deviceRate > 0) _resampler = new SincResampler(_deviceRate, Rate);
         }
     }
 
