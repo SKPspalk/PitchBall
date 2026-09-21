@@ -3,6 +3,10 @@
 > 调研日期：2026-09-20
 > 内容：音高检测引入神经网络模型的可行性分析、接入路线与验证实验方案。
 > 本文件不涉及代码改动，是决策与实施参考。
+> 📌 **实测修正**:本文档的 GPU/DirectML 部分已过时。**接入已按实测结论完成(v1.2.0)**:
+> 用 RMVPE 人声专用模型 + 纯 CPU ONNX 推理 + INT8 量化(94MB)内嵌。
+> 全部实测数据、A/B 结果、以及对本文档的逐条更正见 `NEURAL-PITCH-实测补遗.md`。
+
 
 ## 背景与要解决的问题
 
@@ -57,11 +61,18 @@ README 里已记录的已知边界：
 - 单文件自包含发布约 140 MB，`IncludeNativeLibrariesForSelfExtract=true`
 - 卖点是"单文件便携、免安装、已自包含运行时"——**这个定位决定了路线选择**
 
+> ⚠️ **本节已过时**:GPU/DirectML 的结论已被实测推翻,以 `NEURAL-PITCH-实测补遗.md` 为准。
+> 实测(RTX 5060 Laptop,同一 RMVPE ONNX):**CPU 0.24s / DirectML 2.06s——DirectML 慢 8.6 倍**,
+> 且 ORT 警告有算子回退。音高模型 CPU 已是 8~13ms/秒音频(12~20 倍实时),
+> **结论:用 `Microsoft.ML.OnnxRuntime` 纯 CPU,不要引入 DirectML/CUDA**(体积与复杂度都不划算)。
+> 需要 GPU 的只有"分离"类大模型(BS-RoFormer RTF 22),而那条路线已实测对"伴奏抢线"无效。
+
 | 路线 | 做法 | 评价 |
 |---|---|---|
-| **ONNX Runtime + DirectML** | 模型导出 ONNX，用 `Microsoft.ML.OnnxRuntime` + DirectML 后端在 C# 内推理 | **推荐**。DirectML 走 DX12，RTX 5060 直接可用，**无需安装 CUDA 运行库**，体积仅加几十 MB |
-| ONNX Runtime + CUDA EP | 同上但用 CUDA 后端 | 需捆 CUDA/cuDNN，单文件体积暴涨数 GB，**破坏便携单文件卖点** |
-| Python 边车进程 | 打包 Python + 模型，C# 调子进程 | 需捆 Python 运行时，140 MB → 数百 MB，分发麻烦 |
+| ~~ONNX Runtime + DirectML~~ | ~~DirectML 走 DX12,RTX 5060 直接可用~~ | ❌ **已实测慢 8.6 倍**;且算子回退 CPU。改为纯 CPU |
+| ONNX Runtime + CUDA EP | 同上但用 CUDA 后端 | ❌ 更差:需捆 CUDA/cuDNN,单文件体积暴涨数 GB |
+| **ONNX Runtime(纯 CPU)** | `Microsoft.ML.OnnxRuntime`,模型 INT8 量化后内嵌 | ✅ **v1.2.0 已采用**。CPU 8~13ms/秒音频,模型 94MB(fp32 345MB 量化 3.7 倍) |
+| Python 边车进程 | 打包 Python + 模型,C# 调子进程 | ❌ 需捆 Python 运行时,140 MB → 数百 MB |
 
 模型 ONNX 可用性：Demucs 有社区 ONNX 导出；Basic Pitch 官方提供 ONNX。
 方案 A 经此路线可行。

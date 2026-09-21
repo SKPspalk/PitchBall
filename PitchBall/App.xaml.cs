@@ -179,6 +179,18 @@ public partial class App : Application
                 .GetAwaiter().GetResult();
             sw.Stop();
             Console.WriteLine($"BENCH 耗时 {sw.Elapsed.TotalSeconds:F1}s 算法 {result.Algorithm} 帧数 {result.PitchFreqs.Length} 帧率 {result.PitchRate:F1} 有声比 {result.VoicedRatio:P1} 音域 {NoteNames.GetNoteName(result.MinMidi)}-{NoteNames.GetNoteName(result.MaxMidi)}");
+            // --dump <csv>: 导出逐帧结果(诊断/对照测试用)
+            int dumpIdx = Array.IndexOf(e.Args, "--dump");
+            if (dumpIdx >= 0 && dumpIdx + 1 < e.Args.Length)
+            {
+                using var w = new StreamWriter(e.Args[dumpIdx + 1], false);
+                w.WriteLine("time,freq");
+                for (int i = 0; i < result.PitchFreqs.Length; i++)
+                {
+                    w.WriteLine($"{(i / result.PitchRate):F3},{result.PitchFreqs[i]:F2}");
+                }
+                Console.WriteLine($"  已导出逐帧结果 → {e.Args[dumpIdx + 1]}");
+            }
             Shutdown();
             return;
         }

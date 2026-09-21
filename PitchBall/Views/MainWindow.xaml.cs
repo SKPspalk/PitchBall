@@ -46,6 +46,15 @@ public partial class MainWindow : Window
         RefreshHistoryList();
         Waveform.EnterLive();
         ApplySidebarState();
+
+        // 关于面板的版本号从程序集取:此前是 XAML 里写死的 v1.0.0,升级后一直显示旧版本号
+        var ver = typeof(MainWindow).Assembly.GetName().Version;
+        if (ver != null)
+        {
+            AboutVersionText.Text =
+                $"音高球 PitchBall v{ver.Major}.{ver.Minor}.{ver.Build}\n" +
+                "实时人声音高测量工具\n右键小球切换音源,拖入音频文件离线分析";
+        }
     }
 
     // ---------------- 标题栏 ----------------

@@ -283,7 +283,8 @@
                                                Foreground="{DynamicResource TextSecondaryBrush}"/>
                                     <Button Content="查看新手引导" FontSize="12" Padding="12,6" Margin="0,0,0,10"
                                             HorizontalAlignment="Left" Click="OnShowOnboardingClick"/>
-                                    <TextBlock Text="音高球 PitchBall v1.0.0&#x0a;实时人声音高测量工具&#x0a;右键小球切换音源,拖入音频文件离线分析"
+                                    <!-- 版本号运行时从程序集取(见 MainWindow 构造函数),此处不写死 -->
+                                    <TextBlock x:Name="AboutVersionText" Text="音高球 PitchBall&#x0a;实时人声音高测量工具&#x0a;右键小球切换音源,拖入音频文件离线分析"
                                                FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}"
                                                LineHeight="18"/>
                                 </StackPanel>
