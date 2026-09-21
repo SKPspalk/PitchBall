@@ -6,23 +6,23 @@
 
 | 项 | 状态 |
 |---|---|
-| 已发布到 GitHub | **v1.2.0**（tag + Release + 251MB exe，SHA256 `148A5597…DB9B67`） |
-| 本地已完成、**尚未推送** | **v1.2.1**：提交 `436f238`、tag `v1.2.1`、`publish/PitchBall.exe`（251.1MB，SHA256 `00736661787818A5…`(以 README 为准)）、README 已更新 |
+| 已发布到 GitHub | **v1.2.1**（2026-09-21 推送完成）：`main` = `bcc811c`、tag `v1.2.1` → `bcc811c`、Release + `PitchBall.exe` **263,282,334 字节**，SHA256 `00736661787818A5…9D55`（GitHub 侧 assets.digest 已回读核对一致，已自动成为 Latest） |
+| v1.2.0（上一版） | tag + Release + exe，SHA256 `148A5597…DB9B67`；注意它的关于面板会显示 v1.0.0 |
 | v1.2.1 内容 | ① **修复实时 RMVPE 卡死 + 重采样失效**（详见下节）；② 修复关于面板版本号写死 v1.0.0（改为运行时取程序集版本）；③ 新增 `--rmvpert` 实时链路诊断；④ `NEURAL-PITCH.md` 的 GPU/DirectML 结论标注为过时 |
-| 未提交改动 | `PitchBall/App.xaml.cs`（新增 `--rmvpert` 实时链路诊断入口，已编译通过） |
-| 推送阻塞原因 | 网络：Clash 已停（7897 无监听）、Steam++ 的 hosts 重定向被清，`github.com`/`api.github.com` 超时。恢复一条再推即可 |
+| tag 重指说明 | v1.2.1 原指向 `44e280f`（实时修复之前），推送前已重指到 **`bcc811c`**（含 `436f238` 实时修复 + README 修正），否则 checkout v1.2.1 会拿到有 bug 的源码 |
+| 工作区 | 干净（`App.xaml.cs` 的 `--rmvpert` 入口已随 `436f238` 提交） |
+| 推送方式（下次可复用） | `gh auth token` 生成 `/tmp/askpass.sh`，配合 `HTTPS_PROXY=http://127.0.0.1:7897`；Release 用 `gh release create <tag> publish/PitchBall.exe --notes-file …`（251MB 走热点约 1 分 45 秒） |
 
-**推送命令**（代理恢复后）：
-```bash
-cd "D:/音高测试工具"
-T=$(GIT_TERMINAL_PROMPT=0 "/c/Program Files/GitHub CLI/gh.exe" auth token)
-printf '#!/bin/sh\ncase "$1" in *sername*) echo SKPspalk;; *) echo '"'"'%s'"'"';; esac\n' "$T" > /tmp/askpass.sh && chmod +x /tmp/askpass.sh
-git add -A && git commit -m "v1.2.1:..." 
-GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=/tmp/askpass.sh git -c credential.helper= push origin main
-GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=/tmp/askpass.sh git -c credential.helper= push origin v1.2.1
-# Release: POST api.github.com/repos/SKPspalk/PitchBall/releases (见本轮会话里用过的 rel_v120.json 同法)
-# 附件: POST uploads.github.com/.../releases/<id>/assets?name=PitchBall.exe
-```
+**推送命令**：已于 2026-09-21 执行完毕（`main` 与 `v1.2.1` 均已推送，Release 资产摘要已核对）。可复用片段见上表最后一行。
+
+## 一之三、README / Release 说明的“受众”修正（2026-09-21）
+
+README 与 Release 说明是给 GitHub 上的**其他用户**看的，不该出现只对开发者有意义的内部引用。本轮清理：
+
+- README 去掉：用户素材时间点（`41:10-41:12`）、`用户指认`、`131s/1200s 处 E5/F5`、`5.11s 实时 520.6Hz` 里的测试片段偏移；去掉只影响开发机本机的条目（“新手引导状态重置为未读”“NEURAL-PITCH.md 标注过时结论”——后者是仓库内部文档变更）。相应断言改为与素材无关的通用表述（如“13 首录音室/现场 R&B 素材对照：pYIN 普遍偏低 0.5~1.5 个八度”）。
+- **历史 Release 说明也已同步改**（`gh release edit --notes-file`）：v1.2.0 删掉“用户指认的 41:10-41:12 段…115-263Hz…71.5 vs 60.0”；v1.1.2 删掉“131s 处 E5 被报成 E3、1200s 处的 F5”。v1.1.1 及更早无此问题。
+- **顺手发现并修正**：README 的下载校验块是旧的（写成 `263,278,238 / A9624FFD…`，那是 v1.2.0 的数字）。已改为实际发布产物 `263,282,334 / 00736661…9D55`，并与 GitHub Release 的 `assets.digest` 回读核对一致。**规则：发版后必须用本地 exe 重算 `certutil -hashfile … SHA256` 再写 README。**
+- 仍未处理（待用户决定）：`STATUS.md` / `HANDOFF-CUA.md` / `NEURAL-PITCH*.md` 属内部文档且**公开在仓库里**，是否保留、移入私有仓库或加 `.gitignore`。
 
 ## 一之二、v1.2.1 修掉的两个实时 bug（自动化测试抓到的）
 
@@ -73,14 +73,16 @@ GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=/tmp/askpass.sh git -c credential.helper= push
   - a11y 树上引导/隐藏控件会残留为 `bounds=[0,0,0,0]` 的节点，索引会漂；
   - 画布（波形/音高曲线）与悬浮小球本体对 a11y 不可见，只能靠截图。
 
-## 四、待办
+## 四、待办（2026-09-21 更新）
 
-1. **推送 v1.2.1 + 建 Release**（等网络；命令见上）。注意：v1.2.0 的 Release 里那个 exe 关于面板会显示 v1.0.0。
+1. ~~推送 v1.2.1 + 建 Release~~ **已完成**（见第一节）。v1.2.0 的 Release 说明与 exe 保留原样，仅说明文字改了受众表述；那个 exe 的关于面板会显示 v1.0.0。
 2. ~~跑一次 `--rmvpert` 验证~~ **已完成**：实测实时 520.6Hz vs 离线 520.8Hz ✓（并借此发现并修掉了两个实时 bug，见上）。
-3. **实时路径的最终确认**：`--rmvpert` 只覆盖到"重采样→环形缓冲→后台推理"；真实麦克风/系统声音的端到端体验仍需用户按 10 秒验证（更新频率约 4 次/s、延迟约 0.3~0.5s）。
-4. **RMVPE 的声区标注**目前统一为真声（它只输出音高+置信度）；要恢复"真声/混声/假声"需把原挂在 pYIN 候选上的判据改成频谱量移植。
-5. **可选**：给设置面板的无名控件加 `AutomationProperties.AutomationId`（XAML 十几行），让 UI 自动化脚本稳定（现在只能靠"编号会漂"的索引）。
-6. **R&B 素材的听感裁定**：MJ Human Nature 30–35s / 38–40s、MJ Don't Stop 20–32s（见三.B）。
+3. **实时路径的最终确认（需用户上手）**：`--rmvpert` 只覆盖到"重采样→环形缓冲→后台推理"；真实麦克风/系统声音的端到端体验仍需用户实测（更新频率约 4 次/s、延迟约 0.3~0.5s 是否可接受）。
+4. **实时结果取帧的小改进（可自主做）**：现在取"距窗尾 5 帧"的结果，快速音型会慢一拍；可改窗长 2s + 取距尾 ~15 帧，或融合窗内置信度最高的帧。
+5. **RMVPE 的声区标注**目前统一为真声（它只输出音高+置信度）；要恢复"真声/混声/假声"需把原挂在 pYIN 候选上的判据改成频谱量移植。
+6. **R&B 素材的听感裁定（需用户耳朵，pYIN 优化方向的关键）**：MJ Human Nature 录音室 30–35s / 38–40s、MJ Don't Stop 录音室 20–32s（见三.B）。这是"两个算法谁对"的唯一 ground truth。
+7. **可选**：给设置面板的无名控件加 `AutomationProperties.AutomationId`（XAML 十几行），让 UI 自动化脚本稳定（现在只能靠"编号会漂"的索引）。
+8. **仓库内部文档是否公开**：`STATUS.md` / `HANDOFF-CUA.md` / `NEURAL-PITCH*.md` 目前都在公开仓库里（内容偏开发过程记录），待用户决定保留 / 移私有 / 加 `.gitignore`。
 
 ## 五、环境与路径（关键事实）
 
